@@ -11,8 +11,9 @@ using LinearAlgebra
 using Statistics
 using Printf
 using DelimitedFiles
-using Plots, LaTeXStrings
-pgfplotsx()
+
+# Sin graficación: este script solo calcula y escribe CSV.
+# Las figuras se hacen aparte con rashba_plot_from_csv.jl
 
 println("Threads disponibles: ", Threads.nthreads())
 
@@ -28,13 +29,17 @@ const γ     = 1.0
 const γso   = 1.0 + 0.0im          # t_SO/t_O = 1  ⇒  L_SO ≈ π sitios
 const γc    = 1.0                  # bond de interfaz, limpio
 const δV    = 0.01
-const t_max = 400.0
+const t_max = 500.0
 
 const M   = Ny*Nσ                  # 6 = tamaño de rebanada
 const Ns  = Nx*Ny*Nσ*N_orb         # 18
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
-E_F_vals = collect(range(-3.0, 3.0; length = 11))
+E_F_vals = collect(range(-3.0, 3.0; length = 32))
+
+# E_F donde además se guarda la traza temporal completa (carga + espín)
+const E_F_traces = [0.0, 1.5]        # 3 canales abiertos | 2 canales
+const N_trace_pts = 500              # puntos guardados en [0, t_max]
 
 # ── bloques: extraídos de build_H_ab para garantizar el mismo H ──────────────
 H_ab    = build_H_ab(; Nx=Nx, Ny=Ny, Nσ=Nσ, N_orb=N_orb, γ=γ, γso=γso)
@@ -118,7 +123,8 @@ p_ref  = ModelParamsTDNEGF(Nx=Nx, Ny=Ny, Nσ=Nσ, N_orb=N_orb,
 const Nc = p_ref.Nc
 println("  Nc=$Nc  Ns=$(p_ref.Ns)  |ξ_L - ξ_R| = $(norm(ξ_anL - ξ_anR))")
 
-function run_tdnegf_point(E_F::Float64)
+"Propaga un punto y devuelve las observables en los tiempos `t_save`."
+function run_tdnegf(E_F::Float64, t_save::Vector{Float64})
     μ_L = E_F + δV/2
     μ_R = E_F - δV/2
 
@@ -145,7 +151,6 @@ function run_tdnegf_point(E_F::Float64)
     u0 = zeros(ComplexF64, Ns_sq + pb.aux_layout.total_size)
     u0[1:Ns_sq] .= vec(ρ0)
 
-    t_save = collect(range(0.8*t_max, t_max; length = 20))
     sol = solve(ODEProblem(eom_tdnegf_blocks!, u0, (0.0, t_max), pb), Vern7();
                 reltol=1e-8, abstol=1e-10,
                 dense=false, save_everystep=false, saveat=t_save)
@@ -156,10 +161,16 @@ function run_tdnegf_point(E_F::Float64)
         obs.idx = it
         obs_Ixα!(pointer_blocks(ut, pb.dims_ρ_ab, pb.aux_layout), pb, obs)
     end
+    return obs
+end
 
+# obs.Iα = 2·trΠ y obs.Iαx = 2·s  (observables.jl) ⇒ el ½ corrige ese factor.
+"Conductancia estacionaria en unidades de 2e²/h (π·I/δV pasa de e²/h a 2e²/h)."
+function steady_G(E_F::Float64)
+    obs = run_tdnegf(E_F, collect(range(0.8*t_max, t_max; length = 20)))
     I_L = mean(obs.Iα[1, :])
     I_R = mean(obs.Iα[2, :])
-    return π*I_L/δV, abs(I_L + I_R)      # π·(I/δV) → unidades de 2e²/h
+    return 0.5 * π*I_L/δV, abs(I_L + I_R)
 end
 
 println("\n=== Parte 2: TDNEGF (paralelo, $(Threads.nthreads()) hilos) ===")
@@ -168,53 +179,68 @@ G_tdn = Vector{Float64}(undef, N_pts)
 dI    = Vector{Float64}(undef, N_pts)
 
 @time Threads.@threads for i in 1:N_pts
-    G_tdn[i], dI[i] = run_tdnegf_point(E_F_vals[i])
+    G_tdn[i], dI[i] = steady_G(E_F_vals[i])
+end
+
+# ── trazas temporales: corriente de carga y de espín ─────────────────────────
+println("\n=== Parte 2b: trazas temporales en E_F = $(E_F_traces) ===")
+t_trace = collect(range(0.0, t_max; length = N_trace_pts))
+
+@time Threads.@threads for E_F in E_F_traces
+    obs = run_tdnegf(E_F, t_trace)
+    tag = replace(@sprintf("%+.2f", E_F), "." => "p")
+
+    # ½ por el factor del observable; el signo de R se voltea para que ambas
+    # corrientes se midan en el mismo sentido (izquierda → derecha).
+    I_L  =  0.5 .* obs.Iα[1, :]
+    I_R  = -0.5 .* obs.Iα[2, :]
+    Is_L =  0.5 .* obs.Iαx[1, :, :]      # (3, N_t) : componentes x, y, z
+    Is_R = -0.5 .* obs.Iαx[2, :, :]
+
+    writedlm(joinpath(OUT, "rashba_trace_EF$(tag).csv"),
+             vcat(["t" "I_L" "I_R" "Isx_L" "Isy_L" "Isz_L" "Isx_R" "Isy_R" "Isz_R"],
+                  hcat(obs.t, I_L, I_R,
+                       Is_L[1,:], Is_L[2,:], Is_L[3,:],
+                       Is_R[1,:], Is_R[2,:], Is_R[3,:])), ",")
+
+    @printf("  E_F=%+.2f  I_L(∞)=%.5e  |I_L+I_R|=%.2e  |Is|max=(%.2e, %.2e, %.2e)\n",
+            E_F, I_L[end], abs(I_L[end] - I_R[end]),
+            maximum(abs, Is_L[1,:]), maximum(abs, Is_L[2,:]), maximum(abs, Is_L[3,:]))
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Parte 3: comparación
 # ═══════════════════════════════════════════════════════════════════════════════
 println("\n" * "="^74)
-println("G en unidades de 2e²/h    [ratio ≈ 1 ⇒ sin factor espurio; ≈ 2 ⇒ persiste]")
+println("G en unidades de 2e²/h   (TDNEGF ya corregido por el ×2 de obs.Iα)")
 println("="^74)
 @printf("%-8s  %-12s  %-12s  %-10s  %-12s\n",
-        "E_F", "G_recursivo", "G_TDNEGF", "ratio", "|I_L+I_R|")
+        "E_F", "G_recursivo", "G_TDNEGF", "err(%)", "|I_L+I_R|")
 println("-"^74)
 for i in 1:N_pts
-    ratio = abs(G_ref[i]) > 1e-8 ? G_tdn[i]/G_ref[i] : NaN
+    err = abs(G_ref[i]) > 1e-8 ? 100*abs(G_tdn[i]-G_ref[i])/abs(G_ref[i]) : NaN
     @printf("%-8.2f  %-12.6f  %-12.6f  %-10.4f  %-12.2e\n",
-            E_F_vals[i], G_ref[i], G_tdn[i], ratio, dI[i])
+            E_F_vals[i], G_ref[i], G_tdn[i], err, dI[i])
 end
 
 msk = abs.(G_ref) .> 1e-6
-@printf("\nratio medio (solo puntos con G>0): %.4f ± %.4f\n",
-        mean(G_tdn[msk]./G_ref[msk]), std(G_tdn[msk]./G_ref[msk]))
-
-writedlm(joinpath(OUT, "rashba_conductance_data.csv"),
-         vcat(["E_F" "G_recursivo" "G_TDNEGF"], hcat(E_F_vals, G_ref, G_tdn)), ",")
+@printf("\nerror relativo medio: %.4f %%   |   máx: %.4f %%\n",
+        100*mean(abs.(G_tdn[msk].-G_ref[msk])./G_ref[msk]),
+        100*maximum(abs.(G_tdn[msk].-G_ref[msk])./G_ref[msk]))
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Parte 4: figura
+# Parte 4: salida a CSV (las figuras se hacen con rashba_plot_from_csv.jl)
 # ═══════════════════════════════════════════════════════════════════════════════
-plot(E_dense, T_dense ./ 2;
-     lc = :black, lw = 1.0, ls = :solid,
-     label = L"\mathrm{recursivo}\ T(E)/2",
-     xlabel = L"E_F/\gamma", ylabel = L"G\ [2e^2/h]",
-     framestyle = :box, legend = :topright,
-     size = (350, 240), dpi = 300,
-     xlims = (-4, 4), ylims = (0, 3.4),
-     xticks = -4:2:4, yticks = 0:1:3,
-     grid = false,
-     background_color_legend = :transparent,
-     foreground_color_legend = :transparent,
-     extra_kwargs = Dict(
-         :axis => Dict("tick style" => "{line width=1.5pt, color=black}")))
+writedlm(joinpath(OUT, "rashba_conductance_points.csv"),
+         vcat(["E_F" "G_recursivo" "G_TDNEGF" "dI"],
+              hcat(E_F_vals, G_ref, G_tdn, dI)), ",")
 
-plot!(E_F_vals, G_ref;  lc = :blue, lw = 0, m = :square, ms = 3,
-      label = L"\mathrm{recursivo}\ (\beta=40)")
-plot!(E_F_vals, G_tdn;  lc = :red,  lw = 0, m = :circle, ms = 3,
-      label = L"\mathrm{TDNEGF}")
+writedlm(joinpath(OUT, "rashba_conductance_dense.csv"),
+         vcat(["E" "G_recursivo"], hcat(E_dense, T_dense ./ 2)), ",")
 
-savefig(joinpath(OUT, "rashba_conductance_verification.svg"))
-savefig(joinpath(OUT, "rashba_conductance_verification.png"))
-println(joinpath(OUT, "rashba_conductance_verification.png"))
+println("\nCSV escritos en $OUT:")
+println("  rashba_conductance_points.csv   ($(N_pts) puntos: recursivo vs TDNEGF)")
+println("  rashba_conductance_dense.csv    ($(length(E_dense)) puntos: curva de referencia)")
+for E_F in E_F_traces
+    println("  rashba_trace_EF$(replace(@sprintf("%+.2f", E_F), "." => "p")).csv")
+end
