@@ -17,6 +17,7 @@ using TDNEGF
 using DifferentialEquations
 using Sunny
 using LinearAlgebra
+using LinearAlgebra: BLAS
 using StaticArrays
 using Printf
 using DelimitedFiles
@@ -50,7 +51,7 @@ const V_bias   = 0.5
 const t_on     = 100.0          
 const t_rise   = 10.0           
 const Δt       = 0.1
-const t_end    = 200.0
+const t_end    = 2.0
 
 const damping  = 0.5
 const kT       = 0.0
@@ -109,8 +110,7 @@ function carve!(H::Matrix{ComplexF64}, keep, Nloc::Int)
     return H
 end
 
-function init_electrons()
-    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
+function init_electrons(Rλ, zλ)
     p_model = ModelParamsTDNEGF(Nx=Nx, Ny=Ny, Nσ=Nσ, N_orb=N_orb,
                                 Nα=2, N_λ1=N_λ1, N_λ2=N_λ2)
 
@@ -197,11 +197,12 @@ end
 smooth_switch(t; ti = t_rise) = t < 0 ? 0.0 : (t < ti ? sin((π/2)*t/ti)^2 : 1.0)
 
 # Evolución acoplada
-function run_case(cfg)
+function run_case(cfg, Rλ, zλ)
     @printf("\n[%s]  config=%s  J_x=%+.3f  J_y=%+.3f\n",
             cfg.name, cfg.config, cfg.J_x, cfg.J_y)
+    flush(stdout)
 
-    p_model, p_blocks, u0, _ = init_electrons()
+    p_model, p_blocks, u0, _ = init_electrons(Rλ, zλ)
     sys = init_spins(config = cfg.config, J_x = cfg.J_x, J_y = cfg.J_y)
 
     prob = ODEProblem(eom_tdnegf_blocks!, u0, (0.0, t_end), p_blocks)
@@ -301,16 +302,45 @@ end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 function main()
+    # Sin argumentos corre las cuatro configuraciones. Con argumentos corre solo
+    # las nombradas, p. ej.  julia ... constriction_spin_dynamics.jl AFM_sym
+    sel = isempty(ARGS) ? RUNS : filter(c -> c.name in ARGS, RUNS)
+    if isempty(sel)
+        error("Ninguna corrida coincide con $(ARGS). Opciones: " *
+              join((c.name for c in RUNS), ", "))
+    end
+
+    # Las corridas van en paralelo, una por hilo de Julia. Cada una construye su
+    # propio p_model, p_blocks, sys y obs, y escribe archivos con nombre distinto:
+    # no hay estado mutable compartido. Lo único que se comparte son los polos,
+    # que son de solo lectura, así que se cargan una vez aquí.
+    #
+    # BLAS se limita a 1 hilo por el patrón de siempre: si cada hilo de Julia
+    # lanza además su propio pool de BLAS, se sobresuscriben los cores y el
+    # resultado es más lento, no más rápido. Las matrices aquí son 240×240, un
+    # tamaño en el que BLAS multihilo no aporta nada de todos modos.
+    BLAS.set_num_threads(1)
+    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
+
     print_geometry(KEEP)
     @printf("\nNc=%d  Ns=%d  N_λ=%d   pasos=%d (Δt=%.2f, t_end=%.0f)\n",
             Ny*Nσ*N_orb, Nx*Ny*Nσ*N_orb, N_λ1 + N_λ2,
             Int(round(t_end/Δt)), Δt, t_end)
+    @printf("Corridas: %s\nHilos de Julia: %d (se usan %d)\n",
+            join((c.name for c in sel), ", "), Threads.nthreads(), length(sel))
+    if Threads.nthreads() < length(sel)
+        @printf("AVISO: hay %d corridas y solo %d hilos. Relanza con --threads=%d\n",
+                length(sel), Threads.nthreads(), length(sel))
+    end
+    flush(stdout)
 
-    for cfg in RUNS
-        obs = run_case(cfg)
+    started = time()
+    Threads.@threads for i in eachindex(sel)
+        cfg = sel[i]
+        obs = run_case(cfg, Rλ, zλ)
         save_case(cfg, obs)
     end
-    println("\nListo. Salidas en $OUT")
+    @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT)
 end
 
 main()
