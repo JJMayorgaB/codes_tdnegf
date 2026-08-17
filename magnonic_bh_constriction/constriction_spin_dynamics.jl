@@ -48,9 +48,9 @@ const a0    = 1.0
 
 const V_bias   = 0.5           
 const t_on     = 100.0          
-const t_rise   = 10.0           #
+const t_rise   = 10.0           
 const Δt       = 0.1
-const t_end    = 2.0
+const t_end    = 20.0
 
 const damping  = 0.5
 const kT       = 0.0
