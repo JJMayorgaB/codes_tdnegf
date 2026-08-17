@@ -159,6 +159,17 @@ eje se escala a ese ruido y las etiquetas se vuelven ilegibles. Por eso se
 enmascaran: cero plano, escala fija y anotación.
 """
 function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
+    # Pre-pase: qué paneles son cancelaciones numéricas. La leyenda va en el
+    # primero con señal real — si se fija al panel 1 y ése resulta enmascarado,
+    # la figura entera se queda sin leyenda.
+    amps = Float64[]
+    for (r, _, _, _) in RUNS
+        d = load_trace(r);  d === nothing && continue
+        push!(amps, maximum(maximum(abs, d["$(prefix)_$(c)"]) for c in ("x","y","z")))
+    end
+    isempty(amps) && return
+    leg_panel = something(findfirst(≥(tol), amps), 1)
+
     panels = []
     for (k, (r, lab, _, _)) in enumerate(RUNS)
         d = load_trace(r);  d === nothing && continue
@@ -170,7 +181,7 @@ function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
         p = plot(; title = lab, titlefontsize = 7,
                  ylabel = k in (1, 3) ? sym : "",
                  xlabel = k in (3, 4) ? L"t\ (\hbar/\gamma)" : "",
-                 legend = (k == 1 && !flat) ? :best : false, legendfontsize = 5,
+                 legend = k == leg_panel ? :best : false, legendfontsize = 5,
                  ylims = flat ? (-1.05, 1.05) : :auto,
                  yticks = flat ? (-1:0.5:1) : :auto,
                  base()...)

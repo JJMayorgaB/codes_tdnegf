@@ -50,7 +50,7 @@ const V_bias   = 0.5
 const t_on     = 100.0          
 const t_rise   = 10.0           
 const Δt       = 0.1
-const t_end    = 20.0
+const t_end    = 200.0
 
 const damping  = 0.5
 const kT       = 0.0
