@@ -2,7 +2,7 @@
 # Fig. 1 — AIM no interactuante: n(t),  V = 0,  Δ/Γ = 8
 
 using Pkg
-Pkg.activate(@__DIR__)
+Pkg.activate(joinpath(@__DIR__, ".."))
 
 using TDNEGF, DifferentialEquations, LinearAlgebra
 using Printf, DelimitedFiles, SpecialFunctions

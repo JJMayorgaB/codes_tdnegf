@@ -5,7 +5,7 @@
 #   3) corrientes de espín vs tiempo
 
 using Pkg
-Pkg.activate(@__DIR__)
+Pkg.activate(joinpath(@__DIR__, ".."))
 
 using LinearAlgebra, DelimitedFiles, Printf
 using Plots, LaTeXStrings
@@ -94,19 +94,20 @@ err = 100 .* abs.(G_tdn .- G_rec) ./ max.(G_rec, 1e-12)
         sum(err)/length(err), maximum(err), E_F[argmax(err)])
 
 plot(E_dense, G_dense;
-     lc = :black, lw = 1.2, ls = :solid, label = L"\mathrm{Landauer}",
-     xlabel = L"E_F/\gamma", ylabel = L"G\ [2e^2/h]",
+     lc = :black, lw = 1.2, ls = :solid,
+     label = L"\mathrm{Landauer-Buttiker}",
+     xlabel = L"(E-\varepsilon_0)/t_O", ylabel = L"G\ [2e^2/h]",
      framestyle = :box, legend = :topright,
      size = (350, 240), dpi = 300,
-     xlims = (-4, 4), ylims = (0, 2.0),
-     xticks = -4:2:4, yticks = 0:0.5:2,
+     xlims = (-4, 4), ylims = (0, 2.5),
+     xticks = -4:2:4, yticks = 0:0.5:2.5,
      grid = false,
      background_color_legend = :transparent,
      foreground_color_legend = :transparent,
      extra_kwargs = AXOPTS)
 
-plot!(E_F, G_tdn; lw = 0, m = :circle, ms = 3, mc = :red, msc = :red,
-      label = L"\mathrm{TDNEGF}")
+scatter!(E_F, G_tdn; m = :circle, ms = 3, mc = :red, msc = :red,
+         label = L"\mathrm{TDNEGF}")
 
 savefig(joinpath(OUT, "rashba_conductance_verification.svg"))
 savefig(joinpath(OUT, "rashba_conductance_verification.png"))
@@ -124,6 +125,7 @@ else
     # ── Figura 2: corriente de carga ─────────────────────────────────────────
     plt2 = plot(; xlabel = L"t\ [\hbar/\gamma]", ylabel = L"I(t)\ [e\gamma/\hbar]",
                 framestyle = :box, legend = :bottomright,
+                xlims = (0, 50),
                 size = (350, 240), dpi = 300, grid = false,
                 background_color_legend = :transparent,
                 foreground_color_legend = :transparent,
@@ -147,6 +149,7 @@ else
                 ylabel = L"I^{s_j}(t)\ [\gamma/2]",
                 framestyle = :box, legend = :best,
                 size = (350, 240), dpi = 300, grid = false,
+                xlims = (0, 50),
                 background_color_legend = :transparent,
                 foreground_color_legend = :transparent,
                 extra_kwargs = AXOPTS)

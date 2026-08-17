@@ -2,7 +2,7 @@
 # Fig. 3 — AIM no interactuante: corriente de desplazamiento,  Δ = 0,  V = 0,  T/Γ = 0.4
 
 using Pkg
-Pkg.activate(@__DIR__)
+Pkg.activate(joinpath(@__DIR__, ".."))
 
 using TDNEGF, DifferentialEquations, LinearAlgebra
 using Printf, DelimitedFiles

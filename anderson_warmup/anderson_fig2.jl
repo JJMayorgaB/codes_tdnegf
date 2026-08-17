@@ -2,7 +2,7 @@
 # Fig. 2 — AIM no interactuante: I_L(t), I_R(t), I(t),  Δ = 0,  V/Γ = 20,  T/Γ = 0.4
 
 using Pkg
-Pkg.activate(@__DIR__)
+Pkg.activate(joinpath(@__DIR__, ".."))
 
 using TDNEGF, DifferentialEquations, LinearAlgebra
 using Printf, DelimitedFiles, QuadGK, SpecialFunctions

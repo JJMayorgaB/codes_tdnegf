@@ -3,7 +3,7 @@
 # Referencia = método recursivo (decimación + slices) sobre EL MISMO H_ab.
 
 using Pkg
-Pkg.activate(@__DIR__)
+Pkg.activate(joinpath(@__DIR__, ".."))
 
 using TDNEGF
 using DifferentialEquations

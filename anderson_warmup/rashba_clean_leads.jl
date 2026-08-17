@@ -2,7 +2,7 @@
 # Device Rashba 3x3:  leads Rashba (matched) vs leads limpios (mismatch)
 
 using Pkg
-Pkg.activate(@__DIR__)
+Pkg.activate(joinpath(@__DIR__, ".."))
 
 using LinearAlgebra, Printf, DelimitedFiles
 using Plots, LaTeXStrings
