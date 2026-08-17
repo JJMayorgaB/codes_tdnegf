@@ -113,7 +113,7 @@ end
 
 # 2 · Corriente de carga
 function fig_charge_current()
-    p = plot(; xlabel = L"t\ [\hbar/\gamma]", ylabel = L"I(t)\ [e\gamma/\hbar]",
+    p = plot(; xlabel = L"t\ (\hbar/\gamma)", ylabel = L"I(t)\ (e\gamma/\hbar)",
              legend = :topleft, legendfontsize = 6, size = (420, 280), base()...)
     for (r, lab, col, ls) in RUNS
         d = load_trace(r);  d === nothing && continue
@@ -133,7 +133,7 @@ function fig_spin_current()
     panels = []
     for (k, (col, sym)) in enumerate(comps)
         p = plot(; ylabel = sym,
-                 xlabel = k == 3 ? L"t\ [\hbar/\gamma]" : "",
+                 xlabel = k == 3 ? L"t\ (\hbar/\gamma)" : "",
                  legend = k == 1 ? :topleft : false, legendfontsize = 5,
                  base()...)
         for (r, lab, c, ls) in RUNS
@@ -169,7 +169,7 @@ function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
 
         p = plot(; title = lab, titlefontsize = 7,
                  ylabel = k in (1, 3) ? sym : "",
-                 xlabel = k in (3, 4) ? L"t\ [\hbar/\gamma]" : "",
+                 xlabel = k in (3, 4) ? L"t\ (\hbar/\gamma)" : "",
                  legend = (k == 1 && !flat) ? :best : false, legendfontsize = 5,
                  ylims = flat ? (-1.05, 1.05) : :auto,
                  yticks = flat ? (-1:0.5:1) : :auto,
@@ -345,7 +345,7 @@ function fig_kymograph()
         p = heatmap(t, 0:Nx-1, K;
             c = :inferno, colorbar = true,
             title = lab, titlefontsize = 7,
-            xlabel = k in (3, 4) ? L"t\ [\hbar/\gamma]" : "",
+            xlabel = k in (3, 4) ? L"t\ (\hbar/\gamma)" : "",
             ylabel = k in (1, 3) ? L"x" : "",
             yticks = 0:4:Nx-1, base()...)
         hline!(p, [7]; lc = :cyan, ls = :dash, lw = 0.8, label = "")  # el cuello
