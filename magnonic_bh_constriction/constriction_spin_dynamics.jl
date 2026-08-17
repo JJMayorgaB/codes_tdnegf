@@ -50,7 +50,7 @@ const V_bias   = 0.5
 const t_on     = 100.0          
 const t_rise   = 10.0           #
 const Δt       = 0.1
-const t_end    = 200.0
+const t_end    = 2.0
 
 const damping  = 0.5
 const kT       = 0.0
@@ -74,7 +74,7 @@ function build_mask()
 end
 
 const KEEP    = build_mask()
-const REMOVED = [(x, y) for x in 1:Nx, y in 1:Ny if !KEEP[x, y]]
+const REMOVED = [(x0 + 1, y0 + 1) for (x0, y0) in REMOVED_0BASED]
 
 @inline site_index(x::Int, y::Int) = (x - 1) * Ny + y
 
@@ -130,7 +130,9 @@ function init_electrons()
     p_model.H0_ab .= H0
     p_model.H_ab  .= H0
 
-    p_blocks = ExperimentalBlockRHSParams(copy(H0), blocks,
+    # SIN copy: p_blocks.H_ab debe aliasar p_model.H_ab para que update_H_e!
+    # (que muta p_model.H_ab) llegue efectivamente al RHS del ODE.
+    p_blocks = ExperimentalBlockRHSParams(p_model.H_ab, blocks,
                                           ComplexF64[0.0, 0.0], p_model)
 
     u0 = zeros(ComplexF64, p_blocks.dims_ρ_ab[1]^2 + p_blocks.aux_layout.total_size)
@@ -165,9 +167,12 @@ function init_spins(; config::Symbol, J_x::Float64, J_y::Float64)
     end
 
     # textura inicial
+    # Los sitios inertes NO pueden llevar dipolo nulo: en modo :dipole Sunny
+    # renormaliza a |S| = s en cada paso y normalizar el vector cero da NaN.
+    # Se les pone (0,0,1), que con campo y exchange nulos es un punto fijo.
     for x in 1:Nx, y in 1:Ny
         s = if !KEEP[x, y]
-            Sunny.SVector(0.0, 0.0, 0.0)          # sitio inerte
+            Sunny.SVector(0.0, 0.0, 1.0)          # sitio inerte, estático
         elseif config === :antiferro
             Sunny.SVector(0.0, 0.0, float((-1)^(x + y)))
         else
@@ -257,17 +262,17 @@ end
 # Outputs
 # Magnetización y vector de Néel promediados sobre sitios activos
 function order_parameters(obs, nt)
-    M = zeros(3, nt); N = zeros(3, nt)
+    M = zeros(3, nt); Neel = zeros(3, nt)
     n_act = count(KEEP)
     for t in 1:nt, x in 1:Nx, y in 1:Ny
         KEEP[x, y] || continue
         l = site_index(x, y); sgn = (-1)^(x + y)
         for c in 1:3
-            M[c, t] += obs.sx_i[l, c, t]
-            N[c, t] += obs.sx_i[l, c, t] * sgn
+            M[c, t]    += obs.sx_i[l, c, t]
+            Neel[c, t] += obs.sx_i[l, c, t] * sgn
         end
     end
-    return M ./ n_act, N ./ n_act
+    return M ./ n_act, Neel ./ n_act
 end
 
 function save_case(cfg, obs)
@@ -279,7 +284,7 @@ function save_case(cfg, obs)
     Is_L =  0.5 .* obs.Iαx[1, :, :];  Is_R = -0.5 .* obs.Iαx[2, :, :]
 
     writedlm(joinpath(OUT, "trace_$(cfg.name).csv"),
-        vcat(["t" "I_L" "I_R" "Isx_L" "Isy_L" "Isz_L" "Isx_R" "Isy_R" "Isz_R" "Mx" "My" "Mz" "Nx" "Ny" "Nz"],
+        vcat(["t" "I_L" "I_R" "Isx_L" "Isy_L" "Isz_L" "Isx_R" "Isy_R" "Isz_R" "M_x" "M_y" "M_z" "Neel_x" "Neel_y" "Neel_z"],
              hcat(obs.t, I_L, I_R,
                   Is_L[1,:], Is_L[2,:], Is_L[3,:],
                   Is_R[1,:], Is_R[2,:], Is_R[3,:],
@@ -297,9 +302,9 @@ end
 # ═══════════════════════════════════════════════════════════════════════════════
 function main()
     print_geometry(KEEP)
-    p_model, _, _, _ = init_electrons()
     @printf("\nNc=%d  Ns=%d  N_λ=%d   pasos=%d (Δt=%.2f, t_end=%.0f)\n",
-            p_model.Nc, p_model.Ns, N_λ1 + N_λ2, Int(round(t_end/Δt)), Δt, t_end)
+            Ny*Nσ*N_orb, Nx*Ny*Nσ*N_orb, N_λ1 + N_λ2,
+            Int(round(t_end/Δt)), Δt, t_end)
 
     for cfg in RUNS
         obs = run_case(cfg)
