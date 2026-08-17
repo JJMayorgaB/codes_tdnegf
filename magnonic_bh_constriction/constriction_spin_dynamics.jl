@@ -51,7 +51,7 @@ const V_bias   = 0.5
 const t_on     = 100.0          
 const t_rise   = 10.0           
 const Δt       = 0.1
-const t_end    = 2.0
+const t_end    = 200.0
 
 const damping  = 0.5
 const kT       = 0.0
@@ -300,25 +300,14 @@ function save_case(cfg, obs)
     @printf("  → trace_%s.csv  y  fields_%s.jld2\n", cfg.name, cfg.name)
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
 function main()
-    # Sin argumentos corre las cuatro configuraciones. Con argumentos corre solo
-    # las nombradas, p. ej.  julia ... constriction_spin_dynamics.jl AFM_sym
     sel = isempty(ARGS) ? RUNS : filter(c -> c.name in ARGS, RUNS)
     if isempty(sel)
         error("Ninguna corrida coincide con $(ARGS). Opciones: " *
               join((c.name for c in RUNS), ", "))
     end
 
-    # Las corridas van en paralelo, una por hilo de Julia. Cada una construye su
-    # propio p_model, p_blocks, sys y obs, y escribe archivos con nombre distinto:
-    # no hay estado mutable compartido. Lo único que se comparte son los polos,
-    # que son de solo lectura, así que se cargan una vez aquí.
-    #
-    # BLAS se limita a 1 hilo por el patrón de siempre: si cada hilo de Julia
-    # lanza además su propio pool de BLAS, se sobresuscriben los cores y el
-    # resultado es más lento, no más rápido. Las matrices aquí son 240×240, un
-    # tamaño en el que BLAS multihilo no aporta nada de todos modos.
     BLAS.set_num_threads(1)
     Rλ, zλ = load_poles_square(N_λ1, N_λ2)
 
