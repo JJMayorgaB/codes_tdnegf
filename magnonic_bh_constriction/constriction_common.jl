@@ -1,17 +1,13 @@
-#!/usr/bin/env julia
 #
-# Dinámica acoplada LLG + TDNEGF en una constricción.
+# Definiciones compartidas por relax_state.jl y constriction_dynamics.jl.
 #
-# Zona central Nx=15 × Ny=8. Los 5 columnas iniciales y finales son rectángulos
-# completos; en las 5 intermedias se recortan dos triángulos (bases 5-3-1) desde
-# los bordes y=0 e y=7, dejando un cuello de 2 sitios en x=7.
+# No se ejecuta solo: se incluye con `include("constriction_common.jl")`.
 #
-# Los sitios recortados se eliminan anulando sus hoppings (fila y columna de
-# H_ab a cero). Quedan exactamente desacoplados. Los espines clásicos en esos
-# sitios se aíslan anulando sus bonds de exchange.
-
-using Pkg
-Pkg.activate(joinpath(@__DIR__, ".."))
+# Geometría: zona central Nx=15 × Ny=8. Las 5 columnas iniciales y finales son
+# rectángulos completos; en las 5 intermedias se recortan dos triángulos
+# (bases 5-3-1) desde los bordes y=0 e y=7, dejando un cuello de 2 sitios en x=7.
+# Los sitios recortados se eliminan anulando sus hoppings (fila y columna de H_ab
+# a cero) y aislando sus bonds de exchange.
 
 using TDNEGF
 using DifferentialEquations
@@ -29,32 +25,30 @@ using JLD2
 # J_x, J_y : exchange en cada dirección (+ antiferro, − ferro en convención Sunny)
 const RUNS = [
     (name = "FM_sym",   config = :ferro,     J_x = -0.05, J_y = -0.05),
-    (name = "FM_asym",  config = :ferro,     J_x = -0.05, J_y = -0.025),
+    (name = "FM_asym",  config = :ferro,     J_x = -0.05, J_y = -0.02),
     (name = "AFM_sym",  config = :antiferro, J_x = +0.05, J_y = +0.05),
-    (name = "AFM_asym", config = :antiferro, J_x = +0.05, J_y = +0.025),
+    (name = "AFM_asym", config = :antiferro, J_x = +0.05, J_y = +0.02),
 ]
 
 
-# Parámetros
+# Parámetros comunes
 const Nx, Ny, Nσ, N_orb = 15, 8, 2, 1
 const N_λ1, N_λ2 = 49, 20
 const β     = 40.0
 const γ     = 1.0
-const γso   = 0.0 + 0.0im    
+const γso   = 0.0 + 0.0im
 const E_F   = 0.0
 const j_sd  = 0.1               # acoplamiento sd electrón–espín
-const j_ani = 0.01              # anisotropía uniaxial
+const j_ani = 0.01              # anisotropía uniaxial de ion único, eje fácil z
 const Bx    = 1e-5              # campo semilla para romper degeneración
 const a0    = 1.0
+const Δt    = 0.1
 
-const V_bias   = 0.5           
-const t_on     = 100.0          
-const t_rise   = 10.0           
-const Δt       = 0.1
-const t_end    = 200.0
-
-const damping  = 0.5
-const kT       = 0.0
+# Amortiguamiento y temperatura.
+const damping_relax = 0.5
+const damping_dyn   = 0.007
+const kT_relax      = 0.002       
+const kT_dyn        = 0.002
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
@@ -96,8 +90,6 @@ function print_geometry(keep)
     println("\n  sitios activos: ", count(keep), " de ", Nx*Ny)
 end
 
-
-# Lado electrónico
 #Anula filas y columnas de los sitios eliminados: desacople exacto
 function carve!(H::Matrix{ComplexF64}, keep, Nloc::Int)
     for x in 1:Nx, y in 1:Ny
@@ -130,14 +122,21 @@ function init_electrons(Rλ, zλ)
     p_model.H0_ab .= H0
     p_model.H_ab  .= H0
 
-    p_blocks = ExperimentalBlockRHSParams(p_model.H_ab, blocks, ComplexF64[0.0, 0.0], p_model)
+    # SIN copy: p_blocks.H_ab debe aliasar p_model.H_ab para que update_H_e!
+    # (que muta p_model.H_ab) llegue efectivamente al RHS del ODE.
+    p_blocks = ExperimentalBlockRHSParams(p_model.H_ab, blocks,
+                                          ComplexF64[0.0, 0.0], p_model)
 
     u0 = zeros(ComplexF64, p_blocks.dims_ρ_ab[1]^2 + p_blocks.aux_layout.total_size)
     return p_model, p_blocks, u0, H0
 end
 
 # Lado magnético (Sunny)
-function init_spins(; config::Symbol, J_x::Float64, J_y::Float64)
+# `init` puede ser:
+#   nothing                        → textura ideal según `config`
+#   Matrix/Array de SVector o 3×N  → configuración explícita (estado relajado)
+function init_spins(; config::Symbol, J_x::Float64, J_y::Float64, init = nothing)
+    # a ≠ b rompe la simetría tetragonal: sin eso Sunny trata los bonds ±x y ±y
     latvecs   = lattice_vectors(a0, a0*(1 + 1e-3), 4*a0, 90, 90, 90)
     positions = [[0.5, 0.5, 0.0]]
     cryst     = Crystal(latvecs, positions)
@@ -147,6 +146,8 @@ function init_spins(; config::Symbol, J_x::Float64, J_y::Float64)
     set_field!(sys, [Bx, 0.0, 0.0])
     set_exchange!(sys, J_x, Bond(1, 1, [1, 0, 0]))
     set_exchange!(sys, J_y, Bond(1, 1, [0, 1, 0]))
+
+    # -K (S^z)², eje fácil a lo largo de z
     set_onsite_coupling!(sys, S -> -j_ani*S[3]^2, 1)
 
     sys = to_inhomogeneous(sys)
@@ -166,7 +167,11 @@ function init_spins(; config::Symbol, J_x::Float64, J_y::Float64)
     # textura inicial
     for x in 1:Nx, y in 1:Ny
         s = if !KEEP[x, y]
-            Sunny.SVector(0.0, 0.0, 1.0)          # sitio inerte, estático
+            # En modo :dipole Sunny renormaliza a |S|=1 cada paso, así que un dipolo nulo daría 0/0 = NaN. (0,0,1) con campo y exchange nulos es un punto fijo estático.
+            Sunny.SVector(0.0, 0.0, 1.0)
+        elseif init !== nothing
+            v = init[x, y]
+            Sunny.SVector(v[1], v[2], v[3])
         elseif config === :antiferro
             Sunny.SVector(0.0, 0.0, float((-1)^(x + y)))
         else
@@ -187,59 +192,6 @@ function masked_dipoles(sys)
     return S
 end
 
-# Perfil del bias
-smooth_switch(t; ti = t_rise) = t < 0 ? 0.0 : (t < ti ? sin((π/2)*t/ti)^2 : 1.0)
-
-# Evolución acoplada
-function run_case(cfg, Rλ, zλ)
-    @printf("\n[%s]  config=%s  J_x=%+.3f  J_y=%+.3f\n",
-            cfg.name, cfg.config, cfg.J_x, cfg.J_y)
-    flush(stdout)
-
-    p_model, p_blocks, u0, _ = init_electrons(Rλ, zλ)
-    sys = init_spins(config = cfg.config, J_x = cfg.J_x, J_y = cfg.J_y)
-
-    prob = ODEProblem(eom_tdnegf_blocks!, u0, (0.0, t_end), p_blocks)
-    intg = init(prob, Vern7(); dt = Δt, save_everystep = false, adaptive = true, dense = false)
-    llg  = Langevin(Δt; damping = damping, kT = kT)
-
-    N_steps = Int(round(t_end / Δt))
-    obs = ObservablesTDNEGF(p_model; N_tmax = N_steps, N_leads = 2)
-    site_ranges = [get_sub(i, p_model.N_loc) for i in 1:p_model.N_sites]
-
-    started = time()
-    for i in 1:N_steps
-        obs.idx = i
-        DifferentialEquations.step!(intg, Δt, true)
-        Sunny.step!(sys, llg)
-
-        dv = pointer_blocks(intg.u, p_blocks.dims_ρ_ab, p_blocks.aux_layout)
-        ρ  = ρ_eq(E_F, β, p_model.H_ab, N_λ2, Nx, Ny, Nσ, N_orb)
-
-        obs.t[i] = intg.t
-        obs_n_i!(dv, p_model, obs)
-        obs_σ_i!(dv, p_model, obs)
-        obs_Ixα!(dv, p_blocks, obs)
-        obs_s_i!(sys.dipoles[:, :, 1, 1], p_model, obs)
-        obs_σ_i_eq!(ρ, p_model, obs)
-
-        # realimentación mutua
-        update_H_s!(Nx, Ny, sys, obs.σx_i[:, :, i], j_sd)
-        update_H_e!(p_model, site_ranges, masked_dipoles(sys), j_sd)
-
-        Δ = smooth_switch(intg.t - t_on) * V_bias + 0im
-        p_blocks.Δ_blocks[1] = +Δ/2
-        p_blocks.Δ_blocks[2] = -Δ/2
-
-        if i % 200 == 0
-            @printf("  t=%6.1f/%.0f   I_L=% .4e   elapsed=%.0fs\n", intg.t, t_end, obs.Iα[1, i], time() - started)
-            flush(stdout)
-        end
-    end
-    return obs
-end
-
-
 # update_H_s! : campo efectivo sobre los espines (adaptado del notebook 02)
 function update_H_s!(Nx::Int, Ny::Int, sys, σx_i::Array{Float64,2},
                      j_sd::Float64, B0::Vector{Float64} = [Bx, 0.0, 0.0])
@@ -251,8 +203,6 @@ function update_H_s!(Nx::Int, Ny::Int, sys, σx_i::Array{Float64,2},
     return nothing
 end
 
-
-# Outputs
 # Magnetización y vector de Néel promediados sobre sitios activos
 function order_parameters(obs, nt)
     M = zeros(3, nt); Neel = zeros(3, nt)
@@ -268,55 +218,39 @@ function order_parameters(obs, nt)
     return M ./ n_act, Neel ./ n_act
 end
 
-function save_case(cfg, obs)
-    nt = length(obs.t)
-    M, Nv = order_parameters(obs, nt)
+# Perfil de encendido del bias
+smooth_switch(t, ti) = t < 0 ? 0.0 : (t < ti ? sin((π/2)*t/ti)^2 : 1.0)
 
-    # ½ corrige el factor 2 de obs.Iα / obs.Iαx (observables.jl)
-    I_L  =  0.5 .* obs.Iα[1, :];   I_R  = -0.5 .* obs.Iα[2, :]
-    Is_L =  0.5 .* obs.Iαx[1, :, :];  Is_R = -0.5 .* obs.Iαx[2, :, :]
+# Mismo esquema que el notebook 02: ahí la continuación se hace pasando
+# (u0, m0, p0) de una llamada a la siguiente dentro de la misma sesión, y
+# arrancando la segunda en t_0 = obs.t[end]. Como aquí son dos scripts distintos,
+# lo mismo hay que serializarlo:
+#   u        estado electrónico completo (ρ_ab + modos auxiliares), lo que en el
+#            notebook es `u0`
+#   dipoles  textura de espín, lo que es `m0`
+#   t        tiempo final de la etapa previa, para continuar en t_0 = t
 
-    writedlm(joinpath(OUT, "trace_$(cfg.name).csv"),
-        vcat(["t" "I_L" "I_R" "Isx_L" "Isy_L" "Isz_L" "Isx_R" "Isy_R" "Isz_R" "M_x" "M_y" "M_z" "Neel_x" "Neel_y" "Neel_z"],
-             hcat(obs.t, I_L, I_R,
-                  Is_L[1,:], Is_L[2,:], Is_L[3,:],
-                  Is_R[1,:], Is_R[2,:], Is_R[3,:],
-                  M[1,:], M[2,:], M[3,:], Nv[1,:], Nv[2,:], Nv[3,:])), ",")
+relaxed_path(name) = joinpath(OUT, "relaxed_$(name).jld2")
 
-    jldsave(joinpath(OUT, "fields_$(cfg.name).jld2");
-            t = obs.t, keep = KEEP,
-            n_i = obs.n_i, sigma_i = obs.σx_i,
-            sigma_eq = obs.σx_i_eq, s_i = obs.sx_i,
-            config = String(cfg.config), J_x = cfg.J_x, J_y = cfg.J_y)
-
-    @printf("  → trace_%s.csv  y  fields_%s.jld2\n", cfg.name, cfg.name)
+function save_relaxed(name, sys, u, t_final)
+    A = Array{Float64}(undef, 3, Nx, Ny)
+    for x in 1:Nx, y in 1:Ny
+        v = sys.dipoles[x, y, 1, 1]
+        A[1, x, y] = v[1]; A[2, x, y] = v[2]; A[3, x, y] = v[3]
+    end
+    jldsave(relaxed_path(name);
+            dipoles = A, u = Vector{ComplexF64}(u), keep = KEEP,
+            t = t_final, name = name)
+    @printf("  → relaxed_%s.jld2  (t=%.1f, %d componentes de u)\n",
+            name, t_final, length(u))
 end
 
-
-function main()
-    sel = isempty(ARGS) ? RUNS : filter(c -> c.name in ARGS, RUNS)
-    if isempty(sel)
-        error("Ninguna corrida coincide con $(ARGS). Opciones: " * join((c.name for c in RUNS), ", "))
-    end
-
-    BLAS.set_num_threads(1)
-    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
-
-    print_geometry(KEEP)
-    @printf("\nNc=%d  Ns=%d  N_λ=%d   pasos=%d (Δt=%.2f, t_end=%.0f)\n", Ny*Nσ*N_orb, Nx*Ny*Nσ*N_orb, N_λ1 + N_λ2, Int(round(t_end/Δt)), Δt, t_end)
-    @printf("Corridas: %s\nHilos de Julia: %d (se usan %d)\n", join((c.name for c in sel), ", "), Threads.nthreads(), length(sel))
-    if Threads.nthreads() < length(sel)
-        @printf("AVISO: hay %d corridas y solo %d hilos. Relanza con --threads=%d\n", length(sel), Threads.nthreads(), length(sel))
-    end
-    flush(stdout)
-
-    started = time()
-    Threads.@threads for i in eachindex(sel)
-        cfg = sel[i]
-        obs = run_case(cfg, Rλ, zλ)
-        save_case(cfg, obs)
-    end
-    @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT)
+"Devuelve (dipolos::Matrix{SVector{3}}, u::Vector{ComplexF64}, t_0::Float64)."
+function load_relaxed(name)
+    p = relaxed_path(name)
+    isfile(p) || error("Falta $(p). Corre antes relax_state.jl")
+    A, u, t0 = load(p, "dipoles"), load(p, "u"), load(p, "t")
+    S = [SVector{3,Float64}(A[1, x, y], A[2, x, y], A[3, x, y])
+         for x in 1:Nx, y in 1:Ny]
+    return S, u, t0
 end
-
-main()
