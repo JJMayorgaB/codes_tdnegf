@@ -9,7 +9,10 @@ include(joinpath(@__DIR__, "constriction_common.jl"))
 
 const V_bias     = 0.5
 # Tiempos relativos al t_0 heredado del checkpoint. El estado electrónico llega ya equilibrado, así que no hace falta esperar mucho antes del bias.
-const t_on_off   = 20.0     # el bias entra en t_0 + 20
+# El bias sube desde el instante en que arranca esta etapa: de t_0 a t_0+t_rise,
+# es decir 100 → 110, igual que en el notebook 02. No hace falta margen previo
+# porque el estado electrónico se hereda ya equilibrado desde la relajación.
+const t_on_off   = 0.0
 const t_rise     = 10.0
 const t_duration = 300.0    # de t_0=100 a t=400: tiempo total 400
 
@@ -77,30 +80,6 @@ function run_case(cfg, Rλ, zλ)
     return obs
 end
 
-function save_case(cfg, obs)
-    nt = length(obs.t)
-    M, Nv = order_parameters(obs, nt)
-
-    # ½ corrige el factor 2 de obs.Iα / obs.Iαx (observables.jl)
-    I_L  =  0.5 .* obs.Iα[1, :];      I_R  = -0.5 .* obs.Iα[2, :]
-    Is_L =  0.5 .* obs.Iαx[1, :, :];  Is_R = -0.5 .* obs.Iαx[2, :, :]
-
-    writedlm(joinpath(OUT, "trace_$(cfg.name).csv"),
-        vcat(["t" "I_L" "I_R" "Isx_L" "Isy_L" "Isz_L" "Isx_R" "Isy_R" "Isz_R" "M_x" "M_y" "M_z" "Neel_x" "Neel_y" "Neel_z"],
-             hcat(obs.t, I_L, I_R,
-                  Is_L[1,:], Is_L[2,:], Is_L[3,:],
-                  Is_R[1,:], Is_R[2,:], Is_R[3,:],
-                  M[1,:], M[2,:], M[3,:], Nv[1,:], Nv[2,:], Nv[3,:])), ",")
-
-    jldsave(joinpath(OUT, "fields_$(cfg.name).jld2");
-            t = obs.t, keep = KEEP,
-            n_i = obs.n_i, sigma_i = obs.σx_i,
-            sigma_eq = obs.σx_i_eq, s_i = obs.sx_i,
-            config = String(cfg.config), J_x = cfg.J_x, J_y = cfg.J_y)
-
-    @printf("  → trace_%s.csv  y  fields_%s.jld2\n", cfg.name, cfg.name)
-end
-
 function main()
     sel = isempty(ARGS) ? RUNS : filter(c -> c.name in ARGS, RUNS)
     isempty(sel) && error("Ninguna corrida coincide con $(ARGS). Opciones: " *
@@ -131,7 +110,7 @@ function main()
     Threads.@threads for i in eachindex(sel)
         cfg = sel[i]
         obs = run_case(cfg, Rλ, zλ)
-        save_case(cfg, obs)
+        save_stage(cfg, obs)
     end
     @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT)
 end

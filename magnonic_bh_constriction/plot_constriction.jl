@@ -44,19 +44,40 @@ base(; kw...) = (framestyle = :box, grid = false, dpi = 300,
 # Carga de datos
 trace_path(r)  = joinpath(OUT, "trace_$(r).csv")
 fields_path(r) = joinpath(OUT, "fields_$(r).jld2")
+rtrace_path(r)  = joinpath(OUT, "trace_relax_$(r).csv")
+rfields_path(r) = joinpath(OUT, "fields_relax_$(r).jld2")
 
-"CSV → Dict de columnas por nombre."
-function load_trace(r)
-    p = trace_path(r)
-    isfile(p) || return nothing
+read_csv(p) = begin
     raw  = readdlm(p, ',')
     head = string.(raw[1, :])
     Dict(head[j] => Float64.(raw[2:end, j]) for j in eachindex(head))
 end
 
-load_fields(r) = isfile(fields_path(r)) ? load(fields_path(r)) : nothing
+# Relajación y dinámica se concatenan en el tiempo y se tratan como una sola
+# corrida: las dos etapas escriben el mismo esquema, así que basta pegar.
+function load_trace(r)
+    a = isfile(rtrace_path(r)) ? read_csv(rtrace_path(r)) : nothing
+    b = isfile(trace_path(r))  ? read_csv(trace_path(r))  : nothing
+    a === nothing && return b
+    b === nothing && return a
+    Dict(k => vcat(a[k], b[k]) for k in keys(b) if haskey(a, k))
+end
 
-const AVAIL = [r for (r, _, _, _) in RUNS if isfile(trace_path(r))]
+function load_fields(r)
+    a = isfile(rfields_path(r)) ? load(rfields_path(r)) : nothing
+    b = isfile(fields_path(r))  ? load(fields_path(r))  : nothing
+    a === nothing && return b
+    b === nothing && return a
+    Dict("t"        => vcat(a["t"], b["t"]),
+         "keep"     => b["keep"],
+         "n_i"      => hcat(a["n_i"], b["n_i"]),                    # (Ns, nt)
+         "sigma_i"  => cat(a["sigma_i"],  b["sigma_i"];  dims = 3), # (Ns, 3, nt)
+         "sigma_eq" => cat(a["sigma_eq"], b["sigma_eq"]; dims = 3),
+         "s_i"      => cat(a["s_i"],      b["s_i"];      dims = 3))
+end
+
+const AVAIL = [r for (r, _, _, _) in RUNS
+               if isfile(trace_path(r)) || isfile(rtrace_path(r))]
 isempty(AVAIL) && error("No hay CSV en $OUT — ¿ya corrió constriction_spin_dynamics.jl?")
 println("Corridas encontradas: ", join(AVAIL, ", "))
 
@@ -75,16 +96,19 @@ end
 nearest(t, targets) = [argmin(abs.(t .- τ)) for τ in targets]
 
 
-const SNAP_TIMES = [110.0, 135.0, 250.0, 400.0]
+# Instantáneas: N_SNAPS tiempos igualmente espaciados sobre TODO el rango
+# disponible, relajación y dinámica juntas. Sin lista fija de tiempos, así que
+# se adapta solo a la duración que tengan los datos.
+const N_SNAPS = 8
 
-function snap_indices(t)
-    # Tolerancia de medio paso: t[end] es la suma de 2000 pasos de 0.1
-    tol = length(t) > 1 ? abs(t[2] - t[1]) : 0.0
-    within = filter(τ -> t[1] - tol <= τ <= t[end] + tol, SNAP_TIMES)
-    targets = length(within) >= 2 ? within :
-              [t[1] + f*(t[end] - t[1]) for f in (0.25, 0.5, 0.75, 1.0)]
-    return nearest(t, targets)
-end
+snap_indices(t) = nearest(t, range(t[1], t[end]; length = N_SNAPS))
+
+# Ocho paneles en fila serían ilegibles: se reparten en dos filas de cuatro.
+# Con menos instantáneas se ajusta solo, para que el script siga sirviendo si
+# alguna vez se baja N_SNAPS.
+grid_shape(n) = n <= 4 ? (1, n) : (cld(n, 4), 4)
+is_left(k, ncol)        = (k - 1) % ncol == 0
+is_bottom(k, n, ncol)   = k > n - ncol
 
 # 1 · Geometría
 function fig_geometry()
@@ -199,25 +223,28 @@ function spatial_row(r, field_fun, label, fname, cmap; symmetric = false)
     lims = symmetric ? (-maximum(abs, finite), maximum(abs, finite)) :
                        (minimum(finite), maximum(finite))
 
-    # La barra de color va en el último panel que exista, no en "el número 4".
     n = length(idx)
+    nrow, ncol = grid_shape(n)
     panels = []
     for (k, it) in enumerate(idx)
         p = heatmap(0:Nx-1, 0:Ny-1, grids[k];
             c = cmap, clims = lims, colorbar = (k == n),
             colorbar_title = k == n ? LaTeXString("\$" * label * "\$") : "",
             title = LaTeXString(@sprintf("\$t=%g\$", t[it])), titlefontsize = 7,
-            xlabel = L"x", ylabel = k == 1 ? L"y" : "",
+            xlabel = is_bottom(k, n, ncol) ? L"x" : "",
+            ylabel = is_left(k, ncol) ? L"y" : "",
             aspect_ratio = :equal, xticks = 0:4:Nx-1,
-            yticks = k == 1 ? (0:2:Ny-1) : (0:2:Ny-1, fill("", length(0:2:Ny-1))),
+            yticks = is_left(k, ncol) ? (0:2:Ny-1) :
+                     (0:2:Ny-1, fill("", length(0:2:Ny-1))),
             xlims = (-0.5, Nx-0.5), ylims = (-0.5, Ny-0.5),
-            left_margin = (k == 1 ? 1 : -3)Plots.mm,
-            right_margin = (k == n ? 1 : -3)Plots.mm,
+            left_margin  = (is_left(k, ncol) ? 1 : -3)Plots.mm,
+            right_margin = (k % ncol == 0 ? 1 : -3)Plots.mm,
             base()...)
         push!(panels, p)
     end
 
-    p = plot(panels...; layout = (1, n), size = (760, 185), link = :y)
+    p = plot(panels...; layout = (nrow, ncol),
+             size = (760, 185*nrow), link = :y)
     savefig(p, joinpath(OUT, "$(fname)_$(r).png"))
     savefig(p, joinpath(OUT, "$(fname)_$(r).svg"))
     println("  $(fname)_$(r)")
@@ -247,6 +274,7 @@ function fig_texture(r; tol::Float64 = 1e-3)
     idx = snap_indices(t)
 
     n = length(idx)
+    nrow, ncol = grid_shape(n)
     panels = []
     for (k, it) in enumerate(idx)
         sz = to_grid(s[:, 3, it], keep)
@@ -265,12 +293,14 @@ function fig_texture(r; tol::Float64 = 1e-3)
             c = :RdBu, clims = (-1, 1), colorbar = (k == n),
             colorbar_title = k == n ? L"s_z" : "",
             title = LaTeXString(ttl), titlefontsize = 6,
-            xlabel = L"x", ylabel = k == 1 ? L"y" : "",
+            xlabel = is_bottom(k, n, ncol) ? L"x" : "",
+            ylabel = is_left(k, ncol) ? L"y" : "",
             aspect_ratio = :equal, xticks = 0:4:Nx-1,
-            yticks = k == 1 ? (0:2:Ny-1) : (0:2:Ny-1, fill("", length(0:2:Ny-1))),
+            yticks = is_left(k, ncol) ? (0:2:Ny-1) :
+                     (0:2:Ny-1, fill("", length(0:2:Ny-1))),
             xlims = (-0.5, Nx-0.5), ylims = (-0.5, Ny-0.5),
-            left_margin = (k == 1 ? 1 : -3)Plots.mm,
-            right_margin = (k == n ? 1 : -3)Plots.mm,
+            left_margin  = (is_left(k, ncol) ? 1 : -3)Plots.mm,
+            right_margin = (k % ncol == 0 ? 1 : -3)Plots.mm,
             base()...)
 
         if draw
@@ -293,7 +323,8 @@ function fig_texture(r; tol::Float64 = 1e-3)
         end
         push!(panels, p)
     end
-    p = plot(panels...; layout = (1, n), size = (760, 185), link = :y)
+    p = plot(panels...; layout = (nrow, ncol),
+             size = (760, 185*nrow), link = :y)
     savefig(p, joinpath(OUT, "fig_texture_$(r).png"))
     savefig(p, joinpath(OUT, "fig_texture_$(r).svg"))
     println("  fig_texture_$(r)")

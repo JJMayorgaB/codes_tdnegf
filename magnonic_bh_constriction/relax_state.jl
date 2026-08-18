@@ -33,9 +33,14 @@ function relax_case(cfg, Rλ, zλ)
         Sunny.step!(sys, llg)
 
         dv = pointer_blocks(intg.u, p_blocks.dims_ρ_ab, p_blocks.aux_layout)
+        ρ  = ρ_eq(E_F, β, p_model.H_ab, N_λ2, Nx, Ny, Nσ, N_orb)
+
         obs.t[i] = intg.t
+        obs_n_i!(dv, p_model, obs)
         obs_σ_i!(dv, p_model, obs)
+        obs_Ixα!(dv, p_blocks, obs)
         obs_s_i!(sys.dipoles[:, :, 1, 1], p_model, obs)
+        obs_σ_i_eq!(ρ, p_model, obs)
 
         update_H_s!(Nx, Ny, sys, obs.σx_i[:, :, i], j_sd)
         update_H_e!(p_model, site_ranges, masked_dipoles(sys), j_sd)
@@ -52,6 +57,7 @@ function relax_case(cfg, Rλ, zλ)
     @printf("  final: |M|=%.4f  |N|=%.4f\n", norm(M[:, end]), norm(Nv[:, end]))
 
     save_relaxed(cfg.name, sys, intg.u, t_relax)
+    save_stage(cfg, obs; tag = "_relax")
     return nothing
 end
 

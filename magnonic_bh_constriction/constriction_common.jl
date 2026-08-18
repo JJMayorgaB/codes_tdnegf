@@ -221,6 +221,39 @@ end
 # Perfil de encendido del bias
 smooth_switch(t, ti) = t < 0 ? 0.0 : (t < ti ? sin((π/2)*t/ti)^2 : 1.0)
 
+"""
+Escritura de resultados de una etapa. `tag` vale "" para la dinámica y "_relax"
+para la relajación.
+
+Las dos etapas escriben exactamente el mismo esquema de columnas y de campos, de
+modo que la graficación pueda concatenarlas en el tiempo sin casos especiales y
+mostrar la evolución completa como una sola corrida.
+"""
+function save_stage(cfg, obs; tag::String = "")
+    nt = length(obs.t)
+    M, Nv = order_parameters(obs, nt)
+
+    # ½ corrige el factor 2 de obs.Iα / obs.Iαx (observables.jl)
+    I_L  =  0.5 .* obs.Iα[1, :];      I_R  = -0.5 .* obs.Iα[2, :]
+    Is_L =  0.5 .* obs.Iαx[1, :, :];  Is_R = -0.5 .* obs.Iαx[2, :, :]
+
+    writedlm(joinpath(OUT, "trace$(tag)_$(cfg.name).csv"),
+        vcat(["t" "I_L" "I_R" "Isx_L" "Isy_L" "Isz_L" "Isx_R" "Isy_R" "Isz_R" "M_x" "M_y" "M_z" "Neel_x" "Neel_y" "Neel_z"],
+             hcat(obs.t, I_L, I_R,
+                  Is_L[1,:], Is_L[2,:], Is_L[3,:],
+                  Is_R[1,:], Is_R[2,:], Is_R[3,:],
+                  M[1,:], M[2,:], M[3,:], Nv[1,:], Nv[2,:], Nv[3,:])), ",")
+
+    jldsave(joinpath(OUT, "fields$(tag)_$(cfg.name).jld2");
+            t = obs.t, keep = KEEP,
+            n_i = obs.n_i, sigma_i = obs.σx_i,
+            sigma_eq = obs.σx_i_eq, s_i = obs.sx_i,
+            config = String(cfg.config), J_x = cfg.J_x, J_y = cfg.J_y)
+
+    @printf("  → trace%s_%s.csv  y  fields%s_%s.jld2\n",
+            tag, cfg.name, tag, cfg.name)
+end
+
 # Mismo esquema que el notebook 02: ahí la continuación se hace pasando
 # (u0, m0, p0) de una llamada a la siguiente dentro de la misma sesión, y
 # arrancando la segunda en t_0 = obs.t[end]. Como aquí son dos scripts distintos,
