@@ -9,6 +9,7 @@
 #   5  fig_neel                N(t)                              — 1 panel/corrida
 #   6  fig_occupation_<run>    n_i(x,y) en 4 instantes
 #   7  fig_dsigma_<run>        |σ - σ_eq|(x,y) en 4 instantes
+#  7b  fig_torque_<run>        |s × σ|(x,y): torque sd completo
 #   8  fig_texture_<run>       quiver (s_x,s_y) sobre s_z
 #   9  fig_kymograph           s_⊥ promediado en y, plano (x,t)
 
@@ -40,9 +41,7 @@ base(; kw...) = (framestyle = :box, grid = false, dpi = 300,
                  foreground_color_legend = :transparent,
                  extra_kwargs = AX, kw...)
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # Carga de datos
-# ═══════════════════════════════════════════════════════════════════════════════
 trace_path(r)  = joinpath(OUT, "trace_$(r).csv")
 fields_path(r) = joinpath(OUT, "fields_$(r).jld2")
 
@@ -75,17 +74,11 @@ end
 "Índices de tiempo más cercanos a los valores pedidos."
 nearest(t, targets) = [argmin(abs.(t .- τ)) for τ in targets]
 
-# Instantes preferidos para los mapas (corrida completa: antes del bias, en la
-# subida, y dos después). Si la corrida es más corta —una prueba de humo—, se
-# reparten cuatro instantes uniformes sobre el rango disponible.
-# La etapa de dinámica va de t=100 (fin de la relajación) a t=400, con el bias
-# entrando en t=120: antes del bias, justo después de la subida, y dos más tarde.
+
 const SNAP_TIMES = [110.0, 135.0, 250.0, 400.0]
 
 function snap_indices(t)
-    # Tolerancia de medio paso: t[end] es la suma de 2000 pasos de 0.1, que en
-    # punto flotante da 199.99999… y no 200.0. Sin holgura, el último instante
-    # pedido se descarta y la fila se queda en tres paneles.
+    # Tolerancia de medio paso: t[end] es la suma de 2000 pasos de 0.1
     tol = length(t) > 1 ? abs(t[2] - t[1]) : 0.0
     within = filter(τ -> t[1] - tol <= τ <= t[end] + tol, SNAP_TIMES)
     targets = length(within) >= 2 ? within :
@@ -145,20 +138,8 @@ function fig_spin_current(r, lab)
     println("  fig_spin_current_$(r)   (electrodo izquierdo)")
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # 4-5 · Parámetros de orden
-# ═══════════════════════════════════════════════════════════════════════════════
-"""
-Parámetros de orden. Los paneles donde la cantidad se anula por construcción
-—el Néel en configuración FM, la magnetización en AFM— quedan como cancelaciones
-exactas cuyo residuo es ruido de redondeo (~1e-22). Si se grafican tal cual, el
-eje se escala a ese ruido y las etiquetas se vuelven ilegibles. Por eso se
-enmascaran: cero plano, escala fija y anotación.
-"""
 function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
-    # Pre-pase: qué paneles son cancelaciones numéricas. La leyenda va en el
-    # primero con señal real — si se fija al panel 1 y ése resulta enmascarado,
-    # la figura entera se queda sin leyenda.
     amps = Float64[]
     for (r, _, _, _) in RUNS
         d = load_trace(r);  d === nothing && continue
@@ -183,8 +164,6 @@ function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
                  yticks = flat ? (-1:0.5:1) : :auto,
                  base()...)
 
-        # color y estilo de línea a la vez: en blanco y negro, o con curvas
-        # superpuestas, el color solo no alcanza para distinguirlas.
         for (v, comp, col, ls) in zip(comps, ("x", "y", "z"),
                                       (:red, :green, :blue),
                                       (:solid, :dash, :dot))
@@ -207,9 +186,7 @@ function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
     println("  $fname")
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # 6-7 · Mapas espaciales
-# ═══════════════════════════════════════════════════════════════════════════════
 "Fila de mapas de calor en 4 instantes."
 function spatial_row(r, field_fun, label, fname, cmap; symmetric = false)
     f = load_fields(r);  f === nothing && return
@@ -239,10 +216,7 @@ function spatial_row(r, field_fun, label, fname, cmap; symmetric = false)
             base()...)
         push!(panels, p)
     end
-    # Sin plot_title: en pgfplotsx, Plots lo inserta como una celda más de la
-    # grilla, así que con layout=(1,4) el título se comía el cuarto panel. La
-    # cantidad va ahora en el título de la barra de color, y la corrida en el
-    # nombre del archivo.
+
     p = plot(panels...; layout = (1, n), size = (760, 185), link = :y)
     savefig(p, joinpath(OUT, "$(fname)_$(r).png"))
     savefig(p, joinpath(OUT, "$(fname)_$(r).svg"))
@@ -256,18 +230,17 @@ function dsigma(f, it)
     [sqrt(sum((σ[l, c, it] - σeq[l, c, it])^2 for c in 1:3)) for l in axes(σ, 1)]
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 8 · Textura clásica (quiver sobre s_z)
-# ═══════════════════════════════════════════════════════════════════════════════
-"""
-Textura clásica: `s_z` como mapa de color, componente en el plano como flechas.
 
-Las flechas se escalan al máximo de `s_⊥` del instante, así que si esa componente
-es puro redondeo (la textura inicial es colineal con z y sólo el campo semilla
-Bx ~ 1e-5 la desvía) el mapa mostraría ruido magnificado. Por eso hay umbral:
-por debajo de `tol` no se dibujan y se anota el valor. El factor de escala va en
-el título de cada panel para que las longitudes sean interpretables.
-"""
+function torque(f, it)
+    σ, s = f["sigma_i"], f["s_i"]
+    map(axes(σ, 1)) do l
+        σ1, σ2, σ3 = σ[l,1,it], σ[l,2,it], σ[l,3,it]
+        s1, s2, s3 = s[l,1,it], s[l,2,it], s[l,3,it]
+        sqrt((s2*σ3 - s3*σ2)^2 + (s3*σ1 - s1*σ3)^2 + (s1*σ2 - s2*σ1)^2)
+    end
+end
+
+# 8 · Textura clásica (quiver sobre s_z)
 function fig_texture(r; tol::Float64 = 1e-3)
     f = load_fields(r);  f === nothing && return
     t, keep, s = f["t"], f["keep"], f["s_i"]
@@ -326,15 +299,8 @@ function fig_texture(r; tol::Float64 = 1e-3)
     println("  fig_texture_$(r)")
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 9 · Kymógrafo — el plot del magnón
-# ═══════════════════════════════════════════════════════════════════════════════
-"""
-s_⊥ promediado sobre y, como función de (x, t).
 
-Para AFM se usa la versión alternada (-1)^(x+y): sin eso el orden de Néel
-cancela la señal al promediar sobre y y el mapa sale plano.
-"""
+# 9 · Kymógrafo — el plot del magnón
 function kymograph(s, keep, staggered::Bool)
     nt = size(s, 3)
     K  = fill(NaN, Nx, nt)
@@ -376,7 +342,7 @@ function fig_kymograph()
     println("  fig_kymograph        (línea cian = cuello en x=7)")
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
 function main()
     println("\nGenerando figuras en $OUT\n")
 
@@ -394,6 +360,9 @@ function main()
         spatial_row(r, occupation, raw"n_i", "fig_occupation", :viridis)
         spatial_row(r, dsigma, raw"|\vec{\sigma}_i - \vec{\sigma}_i^{\,\mathrm{eq}}|",
                     "fig_dsigma", :magma)
+        spatial_row(r, torque,
+                    raw"|\vec{s}_i\times\vec{\sigma}_i|",
+                    "fig_torque", :inferno)
         fig_texture(r)
     end
 
