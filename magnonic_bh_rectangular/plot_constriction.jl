@@ -11,7 +11,6 @@
 #   7  fig_dsigma_<run>        |σ - σ_eq|(x,y) en 4 instantes
 #  7b  fig_torque_<run>        |s × σ|(x,y): torque sd completo
 #   8  fig_texture_<run>       quiver (s_x,s_y) sobre s_z
-#   9  fig_kymograph           s_⊥ promediado en y, plano (x,t)
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -331,49 +330,6 @@ function fig_texture(r; tol::Float64 = 1e-3)
 end
 
 
-# 9 · Kymógrafo — el plot del magnón
-function kymograph(s, keep, staggered::Bool)
-    nt = size(s, 3)
-    K  = fill(NaN, Nx, nt)
-    for it in 1:nt, x in 1:Nx
-        ax = 0.0; ay = 0.0; n = 0
-        for y in 1:Ny
-            keep[x, y] || continue
-            l = (x - 1)*Ny + y
-            sg = staggered ? (-1)^(x + y) : 1
-            ax += sg * s[l, 1, it]
-            ay += sg * s[l, 2, it]
-            n  += 1
-        end
-        n > 0 && (K[x, it] = sqrt(ax^2 + ay^2) / n)
-    end
-    return K
-end
-
-function fig_kymograph()
-    panels = []
-    for (k, (r, lab, _, _)) in enumerate(RUNS)
-        f = load_fields(r);  f === nothing && continue
-        t, keep, s = f["t"], f["keep"], f["s_i"]
-        K = kymograph(s, keep, startswith(r, "AFM"))
-
-        p = heatmap(t, 0:Nx-1, K;
-            c = :inferno, colorbar = true,
-            title = lab, titlefontsize = 7,
-            xlabel = k in (3, 4) ? L"t\ (\hbar/\gamma)" : "",
-            ylabel = k in (1, 3) ? L"x" : "",
-            yticks = 0:4:Nx-1, base()...)
-        hline!(p, [7]; lc = :cyan, ls = :dash, lw = 0.8, label = "")  # el cuello
-        push!(panels, p)
-    end
-    isempty(panels) && return
-    p = plot(panels...; layout = (2, 2), size = (760, 480))
-    savefig(p, joinpath(OUT, "fig_kymograph.png"))
-    savefig(p, joinpath(OUT, "fig_kymograph.svg"))
-    println("  fig_kymograph        (línea cian = cuello en x=7)")
-end
-
-
 function main()
     println("\nGenerando figuras en $OUT\n")
 
@@ -397,7 +353,6 @@ function main()
         fig_texture(r)
     end
 
-    fig_kymograph()
     println("\nListo.")
 end
 
