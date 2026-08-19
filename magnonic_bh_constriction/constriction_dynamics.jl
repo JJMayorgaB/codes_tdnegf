@@ -14,7 +14,7 @@ const V_bias     = 0.5
 # porque el estado electrónico se hereda ya equilibrado desde la relajación.
 const t_on_off   = 0.0
 const t_rise     = 10.0
-const t_duration = 300.0    # de t_0=100 a t=400: tiempo total 400
+const t_duration = 600.0    # de t_0=100 a t=700: tiempo total 700
 
 function run_case(cfg, Rλ, zλ)
     @printf("\n[%s]  config=%s  J_x=%+.3f  J_y=%+.3f\n",
