@@ -4,3 +4,6 @@ output/
 *.log
 *.jpg
 *.svg
+*.csv
+*.jld2
+*.txt
