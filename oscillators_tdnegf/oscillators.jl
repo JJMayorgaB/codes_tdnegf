@@ -120,7 +120,7 @@ end
 function update_H_s_free!(sys, σx_i_now)
     for m in FREE
         site = elec_site(m)
-        Sunny.set_field_at!(sys, -j_sd .* σx_i_now[site, :], (m, 1, 1, 1))
+        Sunny.set_field_at!(sys, j_sd .* σx_i_now[site, :], (m, 1, 1, 1))
     end
     for m in DRIVEN
         Sunny.set_field_at!(sys, [0.0, 0.0, 0.0], (m, 1, 1, 1))
