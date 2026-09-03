@@ -262,6 +262,7 @@ def main():
                      help='use 1 out of every N CSV rows as a frame')
     ap.add_argument('--t-min', type=float, default=None)
     ap.add_argument('--t-max', type=float, default=None)
+    ap.add_argument('--dpi', type=int, default=100)
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -289,8 +290,9 @@ def main():
     out_path = os.path.join(args.outdir, f'anim_oscillators_{args.run}.mp4')
     writer = animation.FFMpegWriter(
         fps=args.fps, bitrate=2600, codec='libx264',
-        extra_args=['-preset', 'veryfast', '-threads', '2'])
-    ani.save(out_path, writer=writer, dpi=100)
+        extra_args=['-preset', 'veryfast', '-threads', '1',
+                    '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2'])
+    ani.save(out_path, writer=writer, dpi=args.dpi)
     print(f'  → {out_path}  ({n_frames} cuadros)')
 
 

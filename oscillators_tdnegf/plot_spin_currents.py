@@ -62,11 +62,27 @@ def _milestones(ax):
     ax.axvline(T_ON_G1, color='k', lw=1.0, ls='--', alpha=0.8)
 
 
+R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
+
+
+def r_tag(r):
+    return 'r' + str(r).replace('.', 'p')
+
+
 def load_run(data_dir, name):
     path = os.path.join(data_dir, f'oscillators_trace_{name}.csv')
-    df = pd.read_csv(path)
+    cur = [c for _, cL, cR, _ in ROWS for c in (cL, cR)]
+    dtypes = {'t': 'float64', **{c: 'float32' for c in cur}}
+    df = pd.read_csv(path, usecols=['t'] + cur, dtype=dtypes)
     print(f'  [{name}] leído {path}  ({len(df)} filas)')
     return df
+
+
+def _save(fig, outdir, stem):
+    for ext in ('jpg', 'svg'):
+        fig.savefig(os.path.join(outdir, f'{stem}.{ext}'), bbox_inches='tight', dpi=300)
+    plt.close(fig)
+    print(f'  → {stem}.jpg / .svg')
 
 
 def _delta_label(ylab):
@@ -78,9 +94,11 @@ def _window(df, tmin):
     return df if tmin is None else df[df['t'] >= tmin]
 
 
-def plot_currents(dpos, dneg, outdir, tmin=None, stem='currents_kpos_vs_kneg'):
+def plot_currents(dpos, dneg, outdir, stem, title=None, tmin=None):
     dpos, dneg = _window(dpos, tmin), _window(dneg, tmin)
     fig, axes = plt.subplots(len(ROWS), 1, figsize=(12, 10), sharex=True)
+    if title:
+        fig.suptitle(title)
     for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
         ax = axes[row_i]
         ax.plot(dpos['t'], dpos[colL], '-',  color=C_L, lw=1.5, label=r'$L$, $k{>}0$')
@@ -99,16 +117,15 @@ def plot_currents(dpos, dneg, outdir, tmin=None, stem='currents_kpos_vs_kneg'):
                        ncol=2)
 
     plt.tight_layout()
-    for ext in ('jpg', 'svg'):
-        fig.savefig(os.path.join(outdir, f'{stem}.{ext}'), bbox_inches='tight', dpi=300)
-    plt.show()
-    print(f'  → {stem}.jpg / .svg')
+    _save(fig, outdir, stem)
 
 
-def plot_deltas(dpos, dneg, outdir, tmin=None, stem='delta_I_kpos_vs_kneg'):
+def plot_deltas(dpos, dneg, outdir, stem, title=None, tmin=None):
     """ΔI = I_R - I_L: bombeo neto hacia el lead derecho, kpos vs kneg."""
     dpos, dneg = _window(dpos, tmin), _window(dneg, tmin)
     fig, axes = plt.subplots(len(ROWS), 1, figsize=(12, 10), sharex=True)
+    if title:
+        fig.suptitle(title)
     for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
         ax = axes[row_i]
         ax.axhline(0.0, color='0.6', lw=0.9, ls='-')
@@ -128,10 +145,7 @@ def plot_deltas(dpos, dneg, outdir, tmin=None, stem='delta_I_kpos_vs_kneg'):
                        ncol=2)
 
     plt.tight_layout()
-    for ext in ('jpg', 'svg'):
-        fig.savefig(os.path.join(outdir, f'{stem}.{ext}'), bbox_inches='tight', dpi=300)
-    plt.show()
-    print(f'  → {stem}.jpg / .svg')
+    _save(fig, outdir, stem)
 
 
 def _fft_amp(t, x, t_min):
@@ -156,19 +170,20 @@ FFT_LABELS = {
 }
 
 
-def plot_fourier(dpos, dneg, outdir):
+def plot_fourier(dpos, dneg, outdir, stem, title=None):
     """FFT de las corrientes (L y R) para t>=T_ON_G1, kpos vs kneg."""
     fig, axes = plt.subplots(len(ROWS), 1, figsize=(12, 10), sharex=True)
+    if title:
+        fig.suptitle(title)
     for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
         ax = axes[row_i]
-        #ax.set_yscale('log')
         for d, ls, ktag in [(dpos, '-', r'$k{>}0$'), (dneg, '--', r'$k{<}0$')]:
             wL, aL = _fft_amp(d['t'], d[colL], T_ON_G1)
             wR, aR = _fft_amp(d['t'], d[colR], T_ON_G1)
             ax.plot(wL / OMEGA, aL**2, ls, color=C_L, lw=1.3, label=fr'$L$, {ktag}')
             ax.plot(wR / OMEGA, aR**2, ls, color=C_R, lw=1.3, label=fr'$R$, {ktag}')
         for h in range(1, 5):
-            ax.axvline(h, color='k', lw=0.8, ls=':', alpha=0.5)
+            ax.axvline(h, color='k', lw=0.8, ls=':', alpha=0.35, zorder=0)
         ax.set_xlim(0.0, 4.5)
         _fmt_axes(ax,
                    xlabel=(r'$\omega/\Omega$' if row_i == len(ROWS) - 1 else None),
@@ -179,30 +194,30 @@ def plot_fourier(dpos, dneg, outdir):
                        ncol=2, fontsize=11)
 
     plt.tight_layout()
-    for ext in ('jpg', 'svg'):
-        fig.savefig(os.path.join(outdir, f'fourier_currents_kpos_vs_kneg.{ext}'),
-                    bbox_inches='tight', dpi=300)
-    plt.show()
-    print('  → fourier_currents_kpos_vs_kneg.jpg / .svg')
+    _save(fig, outdir, stem)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data-dir', default=DEFAULT_DIR)
     ap.add_argument('--outdir', default=DEFAULT_DIR)
+    ap.add_argument('--r', type=float, nargs='*', default=list(R_VALUES))
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
-    dpos = load_run(args.data_dir, 'kpos')
-    dneg = load_run(args.data_dir, 'kneg')
+    for r in args.r:
+        tag = r_tag(r)
+        dpos = load_run(args.data_dir, f'{tag}_kpos')
+        dneg = load_run(args.data_dir, f'{tag}_kneg')
+        title = rf'$r=k/\Omega={r}$'
+        odir = os.path.join(args.outdir, tag)
+        os.makedirs(odir, exist_ok=True)
 
-    plot_currents(dpos, dneg, args.outdir)
-    plot_deltas(dpos, dneg, args.outdir)
-    plot_currents(dpos, dneg, args.outdir, tmin=T_ON_G1,
-                  stem='currents_kpos_vs_kneg_zoom')
-    plot_deltas(dpos, dneg, args.outdir, tmin=T_ON_G1,
-                stem='delta_I_kpos_vs_kneg_zoom')
-    plot_fourier(dpos, dneg, args.outdir)
+        plot_currents(dpos, dneg, odir, 'currents', title)
+        plot_deltas(dpos, dneg, odir, 'delta_I', title)
+        plot_currents(dpos, dneg, odir, 'currents_zoom', title, tmin=T_ON_G1)
+        plot_deltas(dpos, dneg, odir, 'delta_I_zoom', title, tmin=T_ON_G1)
+        plot_fourier(dpos, dneg, odir, 'fourier', title)
 
 
 if __name__ == '__main__':
