@@ -15,6 +15,11 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
+# Etiqueta de la corrida: identifica los parámetros físicos en el nombre de
+# la carpeta, para no mezclar salidas de distintas configuraciones.
+@inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
+run_tag() = "gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))"
+
 # Geometría
 const N_SPINS   = 16
 const Nx, Ny    = 2 * N_SPINS + 1, 1        # 33 sitios electrónicos
@@ -59,6 +64,8 @@ const t_relax = 500.0
 const t_final = 6500.0
 
 const R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
+
+const OUT_RUN = joinpath(OUT, run_tag()); mkpath(OUT_RUN)
 
 const RUNS = Tuple(
     (name = "r$(replace(string(r), "." => "p"))_k$(s > 0 ? "pos" : "neg")",

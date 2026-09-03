@@ -33,6 +33,14 @@ base(; kw...) = (framestyle = :box, grid = false, dpi = 300,
                  foreground_color_legend = :transparent,
                  extra_kwargs = AX, kw...)
 
+# pgfplotsx escribe cada punto como una coordenada en el .tex, así que una serie
+# de 6000 pasos por varias curvas desborda la memoria de tokens de LuaTeX. Las
+# figuras miden ~520 px de ancho, de modo que por encima de MAX_PTS puntos por
+# curva no se gana resolución visible. Solo afecta al dibujo: los espectros se
+# calculan siempre con la serie completa.
+const MAX_PTS = 2000
+thin(n::Int) = max(1, cld(n, MAX_PTS))
+
 fields_path(r)  = joinpath(OUT, "fields_$(r).jld2")
 rfields_path(r) = joinpath(OUT, "fields_relax_$(r).jld2")
 
@@ -60,10 +68,24 @@ function fig_component(r, lab, comp, cname, csym)
 
     cols = cgrad(:viridis, length(XS); categorical = true)
 
+    # Eje y centrado en cero y con margen de 0.1 sobre el máximo absoluto de las
+    # curvas que se van a dibujar. Un eje simétrico deja ver de un vistazo si la
+    # oscilación está sesgada hacia un lado.
+    amax = 0.0
+    for x0 in XS, y0 in YS
+        keep[x0 + 1, y0 + 1] || continue
+        l = site_index0(x0, y0)
+        amax = max(amax, maximum(abs, view(s, l, comp, :)))
+    end
+    lim = amax + 0.1
+
     p = plot(; xlabel = L"t\ (\hbar/\gamma)", ylabel = csym,
              title = lab, titlefontsize = 8,
+             ylims = (-lim, lim),
              legend = :outerright, legendfontsize = 5,
              size = (560, 300), base()...)
+
+    st = thin(length(t))
 
     # marca del encendido del bias
     vline!(p, [T_BIAS]; lc = :gray, ls = :dot, lw = 0.8, label = "")
@@ -74,7 +96,8 @@ function fig_component(r, lab, comp, cname, csym)
         ls = j == 1 ? :solid : :dash
         # solo la curva de y=3 entra en la leyenda; la de y=4 comparte color
         lb = j == 1 ? LaTeXString("\$x=$(x0)\$") : ""
-        plot!(p, t, s[l, comp, :]; lc = cols[i], ls = ls, lw = 0.9, label = lb)
+        plot!(p, t[1:st:end], s[l, comp, 1:st:end];
+              lc = cols[i], ls = ls, lw = 0.9, label = lb)
     end
 
     savefig(p, joinpath(OUT, "fig_spins_$(cname)_$(r).png"))

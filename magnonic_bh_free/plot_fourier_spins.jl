@@ -28,7 +28,7 @@ const T_START = 100.0
 # Frecuencia angular máxima a mostrar. Las escalas del problema son la brecha de
 # anisotropía (~2KS = 0.02) y el tope de banda magnónico (~2zJS = 0.4); Nyquist
 # está en ω = π/Δt ≈ 31, muy lejos de lo que interesa.
-const Ω_MAX = 1.0
+const Ω_MAX = 0.5
 
 const RUNS = [
     ("FM_sym",   L"\mathrm{FM}\ J_x{=}J_y"),

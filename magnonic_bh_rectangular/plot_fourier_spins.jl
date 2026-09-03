@@ -1,12 +1,4 @@
 #!/usr/bin/env julia
-#
-# FFT de las trayectorias de espín bajo driving.
-#
-# Mismos 14 sitios que plot_spins.jl: x ∈ {1,3,5,7,9,11,13}, y ∈ {3,4}, en
-# coordenadas 0-based. Se transforma la señal tal cual, en la ventana t ≥ T_START.
-# Solo s^x y s^y, que son las que oscilan.
-#
-#   julia --project=. magnonic_bh_constriction/plot_fourier_spins.jl
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -25,10 +17,7 @@ const YS = [3, 4]
 # Inicio de la ventana: el bias se enciende en t=100.
 const T_START = 100.0
 
-# Frecuencia angular máxima a mostrar. Las escalas del problema son la brecha de
-# anisotropía (~2KS = 0.02) y el tope de banda magnónico (~2zJS = 0.4); Nyquist
-# está en ω = π/Δt ≈ 31, muy lejos de lo que interesa.
-const Ω_MAX = 1.0
+const Ω_MAX = 0.5
 
 const RUNS = [
     ("FM_sym",   L"\mathrm{FM}\ J_x{=}J_y"),
@@ -64,15 +53,7 @@ const AVAIL = [r for (r, _) in RUNS
 isempty(AVAIL) && error("No hay fields_*.jld2 en $OUT")
 println("Corridas encontradas: ", join(AVAIL, ", "))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-"""
-    spectrum(t, x)
 
-FFT real de `x(t)`, sin ventana y sin quitar la media: la señal entra tal cual.
-
-Devuelve la frecuencia angular ω = 2πf y la amplitud |X_k| normalizada por el
-número de muestras, de modo que un tono de amplitud A aparece con altura A.
-"""
 function spectrum(t::AbstractVector, x::AbstractVector)
     n  = length(x)
     Δt = t[2] - t[1]

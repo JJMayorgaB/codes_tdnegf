@@ -5,6 +5,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 plt.rcParams.update({
     'text.usetex': True,
@@ -25,6 +26,7 @@ plt.rcParams.update({
     'grid.alpha': 0.3,
     'grid.color': 'gray',
     'axes.axisbelow': True,
+    'axes.formatter.use_mathtext': False,  # evita \mathdefault{} en ticks (rompe con usetex)
 })
 
 C_R = plt.cm.seismic(0.85)   # lead derecho: tono cálido
@@ -51,6 +53,12 @@ ROWS = [
 def _fmt_axes(ax, xlabel=None, ylabel=None):
     ax.tick_params(axis='both', direction='in', bottom=True, top=True,
                     left=True, right=True, size=6.0, width=1.0)
+    # con usetex=True, ScalarFormatter fuerza \mathdefault{} en los ticks
+    # (macro de mathtext, no existe en LaTeX real) -> lo desactivamos.
+    for axis in (ax.xaxis, ax.yaxis):
+        fmt = axis.get_major_formatter()
+        if isinstance(fmt, mticker.ScalarFormatter):
+            fmt.set_useMathText(False)
     if xlabel is not None:
         ax.set_xlabel(xlabel)
     if ylabel is not None:

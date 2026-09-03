@@ -1,26 +1,4 @@
 #!/usr/bin/env julia
-#
-# Espectro promediado sitio a sitio, por zona.
-#
-# Para cada sitio activo se calcula la densidad espectral de potencia de su
-# componente transversal y luego se promedia sobre los sitios de la zona:
-#
-#     S̄_i(ω) = (1/N_i) Σ_{j∈i} [ S_j^x(ω) + S_j^y(ω) ]
-#
-# Es la suma INCOHERENTE: al promediar potencias se pierde la fase, así que
-# contribuyen todos los modos, estén o no en fase entre sí. Por eso aquí no hace
-# falta distinguir FM de AFM — el orden de Néel no cancela nada, porque el signo
-# desaparece al tomar el módulo al cuadrado.
-#
-# Contrastar con plot_macrospin.jl, que hace la suma coherente. El cociente entre
-# ambos, frecuencia a frecuencia, mide la coherencia espacial dentro de la zona:
-#
-#     coherencia(ω) = S_coherente(ω) / S̄_incoherente(ω)
-#
-# vale ~1 si todos los sitios oscilan en fase y tiende a 1/N_i si sus fases son
-# aleatorias.
-#
-#   julia --project=. magnonic_bh_constriction/plot_averaged_macrospin.jl
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -33,12 +11,12 @@ pgfplotsx()
 const OUT = joinpath(@__DIR__, "output")
 const Nx, Ny = 15, 8
 
-const ZONES = [(0:4,  "entrada"),
-               (5:9,  "constricción"),
-               (10:14, "salida")]
+const ZONES = [(0:4,  "input"),
+               (5:9,  "constriction"),
+               (10:14, "output")]
 
 const T_START = 100.0
-const Ω_MAX   = 1.0
+const Ω_MAX   = 0.5
 
 const RUNS = [
     ("FM_sym",   L"\mathrm{FM}\ J_x{=}J_y"),
@@ -54,6 +32,20 @@ base(; kw...) = (framestyle = :box, grid = false, dpi = 300,
                  background_color_legend = :transparent,
                  foreground_color_legend = :transparent,
                  extra_kwargs = AX, kw...)
+
+raw"""
+Título que combina la etiqueta de la corrida con una anotación, en un solo
+bloque matemático.
+
+`lab` ya trae sus delimitadores de modo matemático, así que concatenar
+directamente lo cerraría antes de tiempo y LaTeX vería el `\mathrm` fuera de él.
+Hay que despojarlo de los delimitadores y volver a envolver el conjunto.
+
+Nota: esta docstring es `raw` porque contiene barras invertidas; en una cadena
+normal Julia las leería como secuencias de escape.
+"""
+titled(lab, note::AbstractString) =
+    LaTeXString("\$" * strip(String(lab), '\$') * "\\quad(" * note * ")\$")
 
 fields_path(r)  = joinpath(OUT, "fields_$(r).jld2")
 rfields_path(r) = joinpath(OUT, "fields_relax_$(r).jld2")
@@ -75,8 +67,7 @@ const AVAIL = [r for (r, _) in RUNS
 isempty(AVAIL) && error("No hay fields_*.jld2 en $OUT")
 println("Corridas encontradas: ", join(AVAIL, ", "))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-"Densidad espectral de potencia de un solo lado, S(ω) = 2Δt|X_k|²/N."
+
 function psd(t::AbstractVector, x::AbstractVector)
     n  = length(x)
     Δt = t[2] - t[1]
@@ -88,33 +79,32 @@ function psd(t::AbstractVector, x::AbstractVector)
 end
 
 """
-    zone_psd(t, s, keep, xs, sel)
-
-Promedio sobre los sitios de la zona de la PSD transversal de cada sitio.
-Devuelve (ω, S̄, N_sitios).
+Promedio sobre los sitios de la zona de la PSD de cada sitio, componente por
+componente. Devuelve (ω, [S̄_x, S̄_y], N_sitios).
 """
 function zone_psd(t, s, keep, xs, sel)
     tw = t[sel]
-    ω  = nothing
-    S  = nothing
+    ω  = Float64[]
+    Sx = Float64[];  Sy = Float64[]
     n  = 0
     for x0 in xs, y0 in 0:Ny-1
         keep[x0 + 1, y0 + 1] || continue
         l = site_index0(x0, y0)
-        ωx, Sx = psd(tw, s[l, 1, sel])
-        _,  Sy = psd(tw, s[l, 2, sel])
-        if S === nothing
-            ω = ωx;  S = Sx .+ Sy
+        ωc, sx = psd(tw, s[l, 1, sel])
+        _,  sy = psd(tw, s[l, 2, sel])
+        if n == 0
+            ω = ωc;  Sx = sx;  Sy = sy      # primer sitio: se toma tal cual
         else
-            S .+= Sx .+ Sy
+            Sx .+= sx;  Sy .+= sy
         end
         n += 1
     end
-    n > 0 && (S ./= n)
-    return ω, S, n
+    if n > 0
+        Sx ./= n;  Sy ./= n
+    end
+    return ω, [Sx, Sy], n
 end
 
-"Parámetro de orden de la zona, para el cociente de coherencia."
 function order_parameter(s, keep, xs, staggered::Bool)
     nt = size(s, 3)
     O  = zeros(3, nt);  n = 0
@@ -131,45 +121,58 @@ function order_parameter(s, keep, xs, staggered::Bool)
     return O, n
 end
 
-# ═══════════════════════════════════════════════════════════════════════════════
 function fig_run(r, lab)
     d = load_spins(r);  d === nothing && return
     t, s, keep = d
     sel = findall(≥(T_START), t)
     length(sel) < 8 && (println("  (ventana demasiado corta en $r)"); return)
-    tw   = t[sel]
-    stag = is_afm(r)
+    tw = t[sel]
 
-    pp = plot(; xlabel = L"\omega\ (\gamma/\hbar)",
-              ylabel = L"\bar{S}_\perp(\omega)",
-              title = lab, titlefontsize = 8, xlims = (0, Ω_MAX),
-              legend = :best, legendfontsize = 5, size = (520, 300), base()...)
+    # PSD promediada sitio a sitio, una componente por panel.
+    pps = [plot(; xlabel = c == 2 ? L"\omega\ (\gamma/\hbar)" : "",
+                ylabel = LaTeXString("\$\\bar{S}_{$(cn)}(\\omega)\$"),
+                title = c == 1 ? lab : "", titlefontsize = 8,
+                xlims = (0, Ω_MAX),
+                legend = c == 1 ? :best : false, legendfontsize = 5, base()...)
+           for (c, cn) in enumerate(("x", "y"))]
 
-    pc = plot(; xlabel = L"\omega\ (\gamma/\hbar)",
-              ylabel = L"S_\perp^{\mathrm{coh}}/\bar{S}_\perp",
-              title = lab, titlefontsize = 8, xlims = (0, Ω_MAX),
-              legend = :best, legendfontsize = 5, size = (520, 300), base()...)
+    # PSD del parámetro de orden de la zona (suma coherente), en figura aparte.
+    pks = Dict(tag => [plot(; xlabel = c == 2 ? L"\omega\ (\gamma/\hbar)" : "",
+                ylabel = LaTeXString("\$S_{$(cn)}^{$(tag)}(\\omega)\$"),
+                title = c == 1 ? titled(lab, tag) : "",
+                titlefontsize = 8, xlims = (0, Ω_MAX),
+                legend = c == 1 ? :best : false, legendfontsize = 5, base()...)
+               for (c, cn) in enumerate(("x", "y"))]
+               for tag in ("M", "N"))
 
     for (z, (xs, zname)) in enumerate(ZONES)
         ω, S̄, n = zone_psd(t, s, keep, xs, sel)
         n == 0 && continue
         m = ω .<= Ω_MAX
-        plot!(pp, ω[m], S̄[m]; lc = ZCOL[z], lw = 1.0, label = "$(zname) (N=$(n))")
+        for c in 1:2
+            plot!(pps[c], ω[m], S̄[c][m]; lc = ZCOL[z], lw = 1.0,
+                  label = "$(zname) (N=$(n))")
+        end
 
-        # cociente de coherencia contra la suma coherente de la misma zona
-        O, _ = order_parameter(s, keep, xs, stag)
-        _, Sx = psd(tw, O[1, sel])
-        _, Sy = psd(tw, O[2, sel])
-        Scoh = Sx .+ Sy
-        ratio = Scoh ./ max.(S̄, eps())
-        plot!(pc, ω[m], ratio[m]; lc = ZCOL[z], lw = 1.0, label = zname)
+        for (tag, stg) in (("M", false), ("N", true))
+            O, _ = order_parameter(s, keep, xs, stg)
+            for c in 1:2
+                _, Scoh = psd(tw, O[c, sel])
+                plot!(pks[tag][c], ω[m], Scoh[m];
+                      lc = ZCOL[z], lw = 1.0, label = "$(zname) (N=$(n))")
+            end
+        end
     end
 
+    pp = plot(pps...; layout = (2, 1), size = (520, 520), link = :x)
     savefig(pp, joinpath(OUT, "fig_avgpsd_$(r).png"))
     savefig(pp, joinpath(OUT, "fig_avgpsd_$(r).svg"))
-    savefig(pc, joinpath(OUT, "fig_coherence_$(r).png"))
-    savefig(pc, joinpath(OUT, "fig_coherence_$(r).svg"))
-    println("  fig_avgpsd_$(r)   fig_coherence_$(r)")
+    for tag in ("M", "N")
+        pk = plot(pks[tag]...; layout = (2, 1), size = (520, 520), link = :x)
+        savefig(pk, joinpath(OUT, "fig_totalpsd_$(tag)_$(r).png"))
+        savefig(pk, joinpath(OUT, "fig_totalpsd_$(tag)_$(r).svg"))
+    end
+    println("  fig_avgpsd_$(r)   fig_totalpsd_{M,N}_$(r)")
 end
 
 function main()

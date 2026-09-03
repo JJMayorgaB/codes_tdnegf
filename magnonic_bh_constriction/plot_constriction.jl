@@ -41,6 +41,13 @@ base(; kw...) = (framestyle = :box, grid = false, dpi = 300,
                  extra_kwargs = AX, kw...)
 
 # Carga de datos
+# pgfplotsx escribe cada punto como una coordenada en el .tex, así que series de
+# miles de pasos por varias curvas desbordan la memoria de tokens de LuaTeX. Las
+# figuras miden unos cientos de píxeles de ancho, de modo que por encima de
+# MAX_PTS puntos por curva no se gana resolución visible.
+const MAX_PTS = 2000
+thin(n::Int) = max(1, cld(n, MAX_PTS))
+
 trace_path(r)  = joinpath(OUT, "trace_$(r).csv")
 fields_path(r) = joinpath(OUT, "fields_$(r).jld2")
 rtrace_path(r)  = joinpath(OUT, "trace_relax_$(r).csv")
@@ -133,8 +140,11 @@ function fig_charge_current(r, lab)
     p = plot(; xlabel = L"t\ (\hbar/\gamma)", ylabel = L"I(t)\ (e\gamma/\hbar)",
              title = lab, titlefontsize = 8,
              legend = :topright, legendfontsize = 7, size = (420, 280), base()...)
-    plot!(p, d["t"], d["I_L"]; lc = :black, ls = :solid, lw = 1.0, label = L"I_L")
-    plot!(p, d["t"], d["I_R"]; lc = :red,   ls = :dash,  lw = 1.0, label = L"I_R")
+    st = thin(length(d["t"]))
+    plot!(p, d["t"][1:st:end], d["I_L"][1:st:end];
+          lc = :black, ls = :solid, lw = 1.0, label = L"I_L")
+    plot!(p, d["t"][1:st:end], d["I_R"][1:st:end];
+          lc = :red,   ls = :dash,  lw = 1.0, label = L"I_R")
     savefig(p, joinpath(OUT, "fig_charge_current_$(r).png"))
     savefig(p, joinpath(OUT, "fig_charge_current_$(r).svg"))
     println("  fig_charge_current_$(r)")
@@ -145,6 +155,7 @@ end
 function fig_spin_current(r, lab)
     d = load_trace(r);  d === nothing && return
     comps = [("Isx_L", L"I^{s_x}"), ("Isy_L", L"I^{s_y}"), ("Isz_L", L"I^{s_z}")]
+    st = thin(length(d["t"]))
 
     panels = []
     for (k, (col, sym)) in enumerate(comps)
@@ -152,7 +163,8 @@ function fig_spin_current(r, lab)
                  xlabel = k == 3 ? L"t\ (\hbar/\gamma)" : "",
                  title = k == 1 ? lab : "", titlefontsize = 8,
                  legend = false, base()...)
-        plot!(p, d["t"], d[col]; lc = :black, lw = 1.0, label = "")
+        plot!(p, d["t"][1:st:end], d[col][1:st:end];
+              lc = :black, lw = 1.0, label = "")
         push!(panels, p)
     end
     p = plot(panels...; layout = (3, 1), size = (420, 620), link = :x)
@@ -187,10 +199,12 @@ function fig_order(prefix::String, sym, fname::String; tol::Float64 = 1e-8)
                  yticks = flat ? (-1:0.5:1) : :auto,
                  base()...)
 
+        st = thin(length(d["t"]))
         for (v, comp, col, ls) in zip(comps, ("x", "y", "z"),
                                       (:red, :green, :blue),
                                       (:solid, :dash, :dot))
-            plot!(p, d["t"], flat ? zero(v) : v;
+            vv = flat ? zero(v) : v
+            plot!(p, d["t"][1:st:end], vv[1:st:end];
                   lc = col, ls = ls, lw = 1.0, label = LaTeXString("\$$(comp)\$"))
         end
 

@@ -1,23 +1,4 @@
 #!/usr/bin/env julia
-#
-# Parámetro de orden por zona: serie temporal y espectro.
-#
-# El dispositivo se divide en tres zonas de 5 columnas: entrada (x = 0…4),
-# constricción (x = 5…9) y salida (x = 10…14). En cada zona se construye el
-# parámetro de orden que corresponde al sistema,
-#
-#     FM :   M_i(t) = (1/N_i) Σ_{j∈i} s_j(t)
-#     AFM:   N_i(t) = (1/N_i) Σ_{j∈i} (-1)^{x_j+y_j} s_j(t)
-#
-# normalizado por el número de sitios activos N_i de la zona, que difiere entre
-# zonas y entre geometrías. Sin esa normalización la zona del cuello saldría
-# sistemáticamente más pequeña por razones geométricas, no físicas.
-#
-# Esta es la suma COHERENTE: solo sobreviven las componentes que oscilan en fase
-# a lo largo de la zona. Compárese con plot_averaged_macrospin.jl, que hace la
-# suma incoherente.
-#
-#   julia --project=. magnonic_bh_constriction/plot_macrospin.jl
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -31,13 +12,13 @@ const OUT = joinpath(@__DIR__, "output")
 const Nx, Ny = 15, 8
 
 # Zonas en x, coordenadas 0-based
-const ZONES = [(0:4,  "entrada"),
-               (5:9,  "constricción"),
-               (10:14, "salida")]
+const ZONES = [(0:4,  "input"),
+               (5:9,  "constriction"),
+               (10:14, "output")]
 
 # Ventana de análisis: solo la etapa con el bias encendido.
 const T_START = 100.0
-const Ω_MAX   = 1.0
+const Ω_MAX   = 0.5
 
 const RUNS = [
     ("FM_sym",   L"\mathrm{FM}\ J_x{=}J_y"),
@@ -53,6 +34,28 @@ base(; kw...) = (framestyle = :box, grid = false, dpi = 300,
                  background_color_legend = :transparent,
                  foreground_color_legend = :transparent,
                  extra_kwargs = AX, kw...)
+
+raw"""
+Título que combina la etiqueta de la corrida con una anotación, en un solo
+bloque matemático.
+
+`lab` ya trae sus delimitadores de modo matemático, así que concatenar
+directamente lo cerraría antes de tiempo y LaTeX vería el `\mathrm` fuera de él.
+Hay que despojarlo de los delimitadores y volver a envolver el conjunto.
+
+Nota: esta docstring es `raw` porque contiene barras invertidas; en una cadena
+normal Julia las leería como secuencias de escape.
+"""
+titled(lab, note::AbstractString) =
+    LaTeXString("\$" * strip(String(lab), '\$') * "\\quad(" * note * ")\$")
+
+# pgfplotsx escribe cada punto como una coordenada en el .tex, así que una serie
+# de 6000 pasos por varias curvas desborda la memoria de tokens de LuaTeX. Las
+# figuras miden ~520 px de ancho, de modo que por encima de MAX_PTS puntos por
+# curva no se gana resolución visible. Solo afecta al dibujo: los espectros se
+# calculan siempre con la serie completa.
+const MAX_PTS = 2000
+thin(n::Int) = max(1, cld(n, MAX_PTS))
 
 fields_path(r)  = joinpath(OUT, "fields_$(r).jld2")
 rfields_path(r) = joinpath(OUT, "fields_relax_$(r).jld2")
@@ -74,14 +77,6 @@ const AVAIL = [r for (r, _) in RUNS
 isempty(AVAIL) && error("No hay fields_*.jld2 en $OUT")
 println("Corridas encontradas: ", join(AVAIL, ", "))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-"""
-    order_parameter(s, keep, xs, staggered)
-
-Parámetro de orden de la zona `xs`, como matriz (3, nt), normalizado por el
-número de sitios activos. `staggered = true` da el vector de Néel; `false`, la
-magnetización. Devuelve también el conteo de sitios.
-"""
 function order_parameter(s, keep, xs, staggered::Bool)
     nt = size(s, 3)
     O  = zeros(3, nt)
@@ -99,94 +94,112 @@ function order_parameter(s, keep, xs, staggered::Bool)
     return O, n
 end
 
-"""
-    psd(t, x)
-
-Densidad espectral de potencia de un solo lado,  S(ω) = 2Δt|X_k|²/N,  que es la
-versión discreta de  S(ω) = |x̃(ω)|²/T  con  x̃(ω) = ∫₀ᵀ x(t)e^{-iωt}dt.
-
-El 1/T es lo que hace que la cantidad converja al alargar la ventana en vez de
-crecer con ella, y es también lo que permite comparar corridas de duración
-distinta —las de t=400 con las de t=700—. El área bajo S/2π es la potencia media
-de la señal.
-
-La señal entra cruda: no se resta la media ni se aplica ventana.
-"""
 function psd(t::AbstractVector, x::AbstractVector)
     n  = length(x)
     Δt = t[2] - t[1]
     X  = rfft(x)
     ω  = 2π .* rfftfreq(n, 1/Δt)
     S  = (Δt/n) .* abs2.(X)
-    S[2:end] .*= 2                  # un solo lado, salvo ω=0
+    S[2:end] .*= 2                  
     return ω, S
 end
 
-"PSD de la parte transversal: S_x + S_y."
-function psd_perp(t, O)
-    ω, Sx = psd(t, O[1, :])
-    _, Sy = psd(t, O[2, :])
-    return ω, Sx .+ Sy
-end
 
-# ═══════════════════════════════════════════════════════════════════════════════
-function fig_run(r, lab)
+"""
+Genera las figuras de una corrida para un parámetro de orden dado.
+
+`stag = false` da la magnetización, `true` el vector de Néel. Se calculan los dos
+en todas las corridas, no uno según la fase.
+
+La razón: la regla "FM → magnetización, AFM → Néel" describe el orden estático,
+pero no la dinámica. En un antiferromagneto el magnón es una precesión del vector
+de Néel que induce una magnetización neta transversal; ambas son variables
+conjugadas y la señal magnónica vive en las dos. Empíricamente, en estas corridas
+el canal limpio del AFM resulta ser la magnetización transversal, no el Néel.
+"""
+function fig_order(r, lab, stag::Bool)
     d = load_spins(r);  d === nothing && return
     t, s, keep = d
     sel = findall(≥(T_START), t)
     length(sel) < 8 && (println("  (ventana demasiado corta en $r)"); return)
     tw  = t[sel]
-    stag = is_afm(r)
-    sym  = stag ? "N" : "M"
+    sym = stag ? "N" : "M"
+    tag = stag ? "N" : "M"
 
-    # ── serie temporal: una fila por componente, las tres zonas superpuestas ──
+    # El parámetro de orden de cada zona se calcula una sola vez y se reutiliza
+    # en los tres paneles y en los espectros.
+    zdata = [(zname, order_parameter(s, keep, xs, stag)...)
+             for (xs, zname) in ZONES]
+
     panels = []
     for (c, cname) in enumerate(("x", "y", "z"))
+        # Eje y centrado en cero, con margen de 0.1 sobre el máximo absoluto
+        # entre las tres zonas, para que los paneles sean comparables entre sí.
+        amax = 0.0
+        for (_, O, n) in zdata
+            n == 0 && continue
+            amax = max(amax, maximum(abs, view(O, c, sel)))
+        end
+        lim = amax + 0.1
+
         p = plot(; ylabel = LaTeXString("\$$(sym)^$(cname)\$"),
                  xlabel = c == 3 ? L"t\ (\hbar/\gamma)" : "",
-                 title = c == 1 ? lab : "", titlefontsize = 8,
+                 title = c == 1 ? titled(lab, tag) : "",
+                 titlefontsize = 8,
+                 ylims = (-lim, lim),
                  legend = c == 1 ? :best : false, legendfontsize = 5,
                  base()...)
-        for (z, (xs, zname)) in enumerate(ZONES)
-            O, n = order_parameter(s, keep, xs, stag)
+        st = thin(length(sel))
+        for (z, (zname, O, n)) in enumerate(zdata)
             n == 0 && continue
-            plot!(p, tw, O[c, sel]; lc = ZCOL[z], lw = 0.9,
+            plot!(p, tw[1:st:end], O[c, sel][1:st:end]; lc = ZCOL[z], lw = 0.9,
                   label = "$(zname) (N=$(n))")
         end
         push!(panels, p)
     end
     p = plot(panels...; layout = (3, 1), size = (520, 620), link = :x)
-    savefig(p, joinpath(OUT, "fig_macrospin_t_$(r).png"))
-    savefig(p, joinpath(OUT, "fig_macrospin_t_$(r).svg"))
-    println("  fig_macrospin_t_$(r)")
+    savefig(p, joinpath(OUT, "fig_macrospin_$(tag)_t_$(r).png"))
+    savefig(p, joinpath(OUT, "fig_macrospin_$(tag)_t_$(r).svg"))
+    println("  fig_macrospin_$(tag)_t_$(r)")
 
-    # ── espectro: amplitud y potencia ────────────────────────────────────────
-    pa = plot(; xlabel = L"\omega\ (\gamma/\hbar)",
-              ylabel = LaTeXString("\$|\\tilde{$(sym)}_\\perp(\\omega)|\$"),
-              title = lab, titlefontsize = 8, xlims = (0, Ω_MAX),
-              legend = :best, legendfontsize = 5, size = (520, 300), base()...)
-    pp = plot(; xlabel = L"\omega\ (\gamma/\hbar)",
-              ylabel = LaTeXString("\$S_\\perp^{$(sym)}(\\omega)\$"),
-              title = lab, titlefontsize = 8, xlims = (0, Ω_MAX),
-              legend = :best, legendfontsize = 5, size = (520, 300), base()...)
-
-    for (z, (xs, zname)) in enumerate(ZONES)
-        O, n = order_parameter(s, keep, xs, stag)
-        n == 0 && continue
-        ω, S = psd_perp(tw, O[:, sel])
-        m = ω .<= Ω_MAX
-        # amplitud del transverso, en las mismas unidades que la señal
-        nT = length(sel);  Δt = tw[2] - tw[1]
-        A  = sqrt.(S .* (2/(nT*Δt)))
-        plot!(pa, ω[m], A[m]; lc = ZCOL[z], lw = 1.0, label = zname)
-        plot!(pp, ω[m], S[m]; lc = ZCOL[z], lw = 1.0, label = zname)
+    # Espectros de cada componente por separado, no de la combinación
+    # transversal. Manteniéndolas separadas se puede ver si la precesión es
+    # circular —misma amplitud en x e y— o elíptica, información que se pierde
+    # al sumar en cuadratura.
+    pas = Any[];  pps = Any[]
+    for (c, cname) in enumerate(("x", "y"))
+        push!(pas, plot(; xlabel = c == 2 ? L"\omega\ (\gamma/\hbar)" : "",
+              ylabel = LaTeXString("\$|\\tilde{$(sym)}^$(cname)(\\omega)|\$"),
+              title = c == 1 ? titled(lab, tag) : "",
+              titlefontsize = 8, xlims = (0, Ω_MAX),
+              legend = c == 1 ? :best : false, legendfontsize = 5, base()...))
+        push!(pps, plot(; xlabel = c == 2 ? L"\omega\ (\gamma/\hbar)" : "",
+              ylabel = LaTeXString("\$S_{$(cname)}^{$(sym)}(\\omega)\$"),
+              title = c == 1 ? titled(lab, tag) : "",
+              titlefontsize = 8, xlims = (0, Ω_MAX),
+              legend = c == 1 ? :best : false, legendfontsize = 5, base()...))
     end
 
-    savefig(pa, joinpath(OUT, "fig_macrospin_fft_$(r).png"))
-    savefig(pa, joinpath(OUT, "fig_macrospin_fft_$(r).svg"))
-    savefig(pp, joinpath(OUT, "fig_macrospin_psd_$(r).png"))
-    savefig(pp, joinpath(OUT, "fig_macrospin_psd_$(r).svg"))
-    println("  fig_macrospin_fft_$(r)   fig_macrospin_psd_$(r)")
+    nT = length(sel);  Δt = tw[2] - tw[1]
+    for (z, (zname, O, n)) in enumerate(zdata)
+        n == 0 && continue
+        for c in 1:2
+            ω, S = psd(tw, O[c, sel])
+            m = ω .<= Ω_MAX
+            A = sqrt.(S .* (2/(nT*Δt)))
+            plot!(pas[c], ω[m], A[m]; lc = ZCOL[z], lw = 1.0, label = zname)
+            plot!(pps[c], ω[m], S[m]; lc = ZCOL[z], lw = 1.0, label = zname)
+        end
+    end
+
+    pa = plot(pas...; layout = (2, 1), size = (520, 520), link = :x)
+    pp = plot(pps...; layout = (2, 1), size = (520, 520), link = :x)
+
+    savefig(pa, joinpath(OUT, "fig_macrospin_$(tag)_fft_$(r).png"))
+    savefig(pa, joinpath(OUT, "fig_macrospin_$(tag)_fft_$(r).svg"))
+    savefig(pp, joinpath(OUT, "fig_macrospin_$(tag)_psd_$(r).png"))
+    savefig(pp, joinpath(OUT, "fig_macrospin_$(tag)_psd_$(r).svg"))
+    println("  fig_macrospin_$(tag)_fft_$(r)   fig_macrospin_$(tag)_psd_$(r)")
 end
 
 function main()
@@ -196,7 +209,9 @@ function main()
             T_START, Ω_MAX)
     for (r, lab) in RUNS
         r in AVAIL || continue
-        fig_run(r, lab)
+        for stag in (false, true)          # magnetización y vector de Néel
+            fig_order(r, lab, stag)
+        end
     end
     println("\nListo.")
 end
