@@ -133,7 +133,7 @@ function save_outputs(name::String, k::Float64, obs, S_hist)
     t  = obs.t
     Nt = length(t)
 
-    jldsave(joinpath(OUT, "oscillators_fields_$(name).jld2");
+    jldsave(joinpath(OUT_RUN, "oscillators_fields_$(name).jld2");
             t = t, s_i = S_hist,
             sigma_i = obs.σx_i, sigma_eq = obs.σx_i_eq, n_i = obs.n_i,
             I_alpha = obs.Iα, I_alpha_x = obs.Iαx,
@@ -171,8 +171,44 @@ function save_outputs(name::String, k::Float64, obs, S_hist)
             data[i, col] = S_hist[3, m, i]; col += 1
         end
     end
-    writedlm(joinpath(OUT, "oscillators_trace_$(name).csv"), vcat(permutedims(header), data), ",")
-    @printf("  [%s] → oscillators_fields_%s.jld2   oscillators_trace_%s.csv\n", name, name, name)
+    writedlm(joinpath(OUT_RUN, "oscillators_trace_$(name).csv"), vcat(permutedims(header), data), ",")
+    @printf("  [%s] → %s/oscillators_fields_%s.jld2   oscillators_trace_%s.csv\n",
+            name, basename(OUT_RUN), name, name)
+    return nothing
+end
+
+function write_params_label()
+    path = joinpath(OUT_RUN, "params.txt")
+    open(path, "w") do io
+        println(io, "run_tag = ", run_tag())
+        println(io, "")
+        println(io, "γ       = ", γ)
+        println(io, "γso     = ", γso)
+        println(io, "γ_eff   = ", γ_eff)
+        println(io, "j_sd    = ", j_sd)
+        println(io, "θ_max   = ", rad2deg(θ_max), " deg (", θ_max, " rad)")
+        println(io, "Ω       = ", Ω)
+        println(io, "")
+        println(io, "E_F     = ", E_F)
+        println(io, "β       = ", β)
+        println(io, "N_λ1    = ", N_λ1)
+        println(io, "N_λ2    = ", N_λ2)
+        println(io, "Δt      = ", Δt)
+        println(io, "")
+        println(io, "damping_relax = ", damping_relax)
+        println(io, "damping_dyn   = ", damping_dyn)
+        println(io, "kT            = ", kT)
+        println(io, "")
+        println(io, "t_rise  = ", t_rise)
+        println(io, "t_on_g3 = ", t_on_g3)
+        println(io, "t_on_g1 = ", t_on_g1)
+        println(io, "t_relax = ", t_relax)
+        println(io, "t_final = ", t_final)
+        println(io, "")
+        println(io, "R_VALUES = ", R_VALUES)
+        println(io, "RUNS     = ", join((c.name for c in RUNS), ", "))
+    end
+    @printf("Etiqueta de parámetros escrita en %s\n", path)
     return nothing
 end
 
@@ -275,13 +311,15 @@ function main()
                 length(sel), Threads.nthreads(), length(sel))
     flush(stdout)
 
+    write_params_label()
+
     Rλ, zλ = load_poles_square(N_λ1, N_λ2)
 
     started = time()
     Threads.@threads for i in eachindex(sel)
         run_case(sel[i], Rλ, zλ)
     end
-    @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT)
+    @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT_RUN)
 end
 
 main()

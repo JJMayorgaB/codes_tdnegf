@@ -35,12 +35,20 @@ C_KPOS = plt.cm.seismic(0.85)  # k>0
 C_KNEG = plt.cm.seismic(0.15)  # k<0
 
 #(ver oscillators.jl)
-T_ON_G3 = 250.0   # arranca la precesión uniforme del grupo3
-T_ON_G1 = 1000.0  # arranca la onda viajera del grupo1
-OMEGA = 0.5       # frecuencia de driving (ver oscillators.jl)
+T_ON_G3 = 500.0   # arranca la precesión uniforme del grupo3
+T_ON_G1 = 2000.0  # arranca la onda viajera del grupo1
+OMEGA = 0.05      # frecuencia de driving (ver oscillators.jl)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output')
+BASE_OUT = os.path.join(SCRIPT_DIR, 'output')
+
+
+def _auto_run_tag():
+    """Si output/ tiene una única subcarpeta de corrida, se usa por defecto."""
+    if not os.path.isdir(BASE_OUT):
+        return None
+    subdirs = [d for d in os.listdir(BASE_OUT) if os.path.isdir(os.path.join(BASE_OUT, d))]
+    return subdirs[0] if len(subdirs) == 1 else None
 
 ROWS = [
     ('I',   'I_L',   'I_R',   r'$I$'),
@@ -207,18 +215,34 @@ def plot_fourier(dpos, dneg, outdir, stem, title=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--data-dir', default=DEFAULT_DIR)
-    ap.add_argument('--outdir', default=DEFAULT_DIR)
+    ap.add_argument('--run-tag', default=None,
+                     help='subcarpeta de output/ con la etiqueta de parámetros '
+                          '(gso..._jsd..._th..._Om...). Si se omite y output/ tiene '
+                          'una única subcarpeta, se usa esa.')
+    ap.add_argument('--data-dir', default=None, help='override directo (ignora --run-tag)')
+    ap.add_argument('--outdir', default=None, help='override directo (ignora --run-tag)')
     ap.add_argument('--r', type=float, nargs='*', default=list(R_VALUES))
     args = ap.parse_args()
-    os.makedirs(args.outdir, exist_ok=True)
+
+    run_tag = args.run_tag or _auto_run_tag()
+    if (args.data_dir is None or args.outdir is None) and run_tag is None:
+        opciones = sorted(os.listdir(BASE_OUT)) if os.path.isdir(BASE_OUT) else []
+        raise SystemExit(
+            'No se pudo determinar la carpeta de la corrida: pasa --run-tag <etiqueta> '
+            '(o --data-dir/--outdir explícitos). Subcarpetas en output/: '
+            + (', '.join(opciones) if opciones else '(output/ no existe o está vacío)'))
+
+    data_dir = args.data_dir or os.path.join(BASE_OUT, run_tag)
+    outdir = args.outdir or data_dir
+    os.makedirs(outdir, exist_ok=True)
+    print(f'run_tag = {run_tag}\ndata_dir = {data_dir}\noutdir   = {outdir}')
 
     for r in args.r:
         tag = r_tag(r)
-        dpos = load_run(args.data_dir, f'{tag}_kpos')
-        dneg = load_run(args.data_dir, f'{tag}_kneg')
+        dpos = load_run(data_dir, f'{tag}_kpos')
+        dneg = load_run(data_dir, f'{tag}_kneg')
         title = rf'$r=k/\Omega={r}$'
-        odir = os.path.join(args.outdir, tag)
+        odir = os.path.join(outdir, tag)
         os.makedirs(odir, exist_ok=True)
 
         plot_currents(dpos, dneg, odir, 'currents', title)
