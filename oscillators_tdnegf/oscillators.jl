@@ -1,40 +1,4 @@
 #!/usr/bin/env julia
-#
-# Cadena 1D con acoplamiento Rashba (TDNEGF) + 16 espines clásicos acoplados
-# vía Jsd, sin exchange directo entre ellos.
-#
-#   H_e = Σ_i,σσ'  ε0 c†_iσ c_iσ  - t(c†_{i+1}σ c_iσ + h.c.)
-#         - iλ( c†_iσ [σy]_σσ' c_{i+1}σ' - c†_{i+1}σ [σy]_σσ' c_iσ' )
-#
-# se construye con build_H_ab(γ=t, γso=λ) — verificado contra
-# TDNEGF/src/hamiltonians.jl: para Ny=1 da exactamente H_{i,i+1}=-tσ0-iλσy,
-# H_{i+1,i}=-tσ0+iλσy, ε0=0.
-#
-# 33 sitios electrónicos (2·16+1). Los 16 espines viven en los sitios pares
-# 2,4,...,32 (uno de por medio libre). Grupos:
-#   grupo1 = espines 1-5    (sitios 2..10)   onda viajera, arranca en t=300
-#   grupo2 = espines 6-10   (sitios 12..20)  libre (LLG)
-#   grupo3 = espín 11       (sitio 22)       precesión uniforme, t=100
-#   grupo4 = espines 12-16  (sitios 24..32)  libre (LLG)
-#
-# Grupo1 y grupo3 son cinemáticos: M(t) se sustituye directo en el
-# acoplamiento sd, nunca entran a la integración LLG (igual que en
-# Project_nonreciprocal_magnons/scripts/pump_two_emitters.jl). Antes de su
-# t_on, θ=0 ⇒ M=(0,0,1), igual que el resto — no hace falta tratarlos aparte.
-#
-# Arquitectura del solver: la misma que magnonic_bh_* — DOS integradores en
-# paralelo avanzados juntos cada Δt: DifferentialEquations.step! para el
-# bloque electrónico (TDNEGF) y Sunny.step! (Langevin) para los espines
-# clásicos. Los espines del sistema Sunny (16 sitios, sin exchange ni
-# anisotropía) evolucionan libremente; justo después de cada Sunny.step! se
-# sobreescriben a la fuerza los de grupo1/grupo3 con su valor cinemático,
-# igual que ya se hace con los sitios "removidos" en la constricción, solo
-# que aquí el valor forzado depende de t.
-#
-# Sin bias: los leads son baños térmicos puros (μ_L=μ_R=E_F=0). Sin ruido de
-# Langevin en los espines (kT=0): la única disipación entra por los leads.
-#
-#   julia --project=. oscillators_tdnegf/oscillators.jl
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -51,9 +15,7 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
-# ═══════════════════════════════════════════════════════════════════════════
 # Geometría
-# ═══════════════════════════════════════════════════════════════════════════
 const N_SPINS   = 16
 const Nx, Ny    = 2 * N_SPINS + 1, 1        # 33 sitios electrónicos
 const Nσ, N_orb = 2, 1
@@ -70,14 +32,12 @@ const GROUPS = (
 const DRIVEN = vcat(collect(GROUPS.g1), collect(GROUPS.g3))
 const FREE   = vcat(collect(GROUPS.g2), collect(GROUPS.g4))
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Parámetros físicos
-# ═══════════════════════════════════════════════════════════════════════════
+# Parámetros físicos 
 const γ   = 1.0 / sqrt(2)          # hopping t
 const γso = 1.0 / sqrt(2)          # Rashba λ  (γ=λ ⇒ γ_eff=√(t²+λ²)=1)
 const γ_eff = sqrt(γ^2 + γso^2)
 
-const E_F = 0.0                    # sin bias: μ_L=μ_R=E_F
+const E_F = 0.0                    # sin bias
 const β   = 40.0
 const N_λ1, N_λ2 = 49, 20
 const j_sd = 1.0                   # mismo Jsd en los 16 sitios
@@ -86,21 +46,25 @@ const Δt = 0.1
 
 const damping_relax = 0.5
 const damping_dyn   = 0.007
-const kT            = 0.0          # sin ruido de Langevin: disipan los leads
+const kT            = 0.0         
 
-# --- driving cinemático ---
+#driving cinemático 
 const θ_max   = deg2rad(15.0)
 const Ω       = 0.5
-const k_wave  = Ω / γ_eff          # resonancia con v_F=2γ_eff ⇒ k=Ω/γ_eff=0.5
+const k_mag   = Ω / γ_eff          
 const t_rise  = 10.0
 const t_on_g3 = 100.0
 const t_on_g1 = 300.0
 const t_relax = 100.0
-const t_final = 700.0              # ajustar si hace falta ver más tiempo
+const t_final = 700.0            
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Driving cinemático: M(t) = [sinθ(t)cos(kx-Ω(t-t_on)), sinθ(t)sin(...), cosθ(t)]
-# ═══════════════════════════════════════════════════════════════════════════
+const RUNS = (
+    (name = "kpos", k = +k_mag),
+    (name = "kneg", k = -k_mag),
+)
+
+
+# Driving cinemático: M(t) 
 @inline smooth_switch(τ, ti) = τ < 0 ? 0.0 : (τ < ti ? sin((π / 2) * τ / ti)^2 : 1.0)
 
 @inline function pumped_spin(t::Float64, x::Float64, k::Float64, t_on::Float64)
@@ -109,18 +73,19 @@ const t_final = 700.0              # ajustar si hace falta ver más tiempo
     return SVector{3,Float64}(sin(θ) * cos(φ), sin(θ) * sin(φ), cos(θ))
 end
 
-# (x, k, t_on) de cada espín impulsado. x = índice del espín (1..16); para
-# grupo3, k=0 así que x no importa.
-@inline function drive_of(m::Int)
-    m in GROUPS.g3 && return (0.0, 0.0, t_on_g3)
-    m in GROUPS.g1 && return (Float64(m), k_wave, t_on_g1)
-    error("drive_of llamado con un espín libre")
+
+function force_driven!(sys, t::Float64, k::Float64)
+    for m in GROUPS.g3
+        sys.dipoles[m, 1, 1, 1] = pumped_spin(t, 0.0, 0.0, t_on_g3)
+    end
+    for m in GROUPS.g1
+        sys.dipoles[m, 1, 1, 1] = pumped_spin(t, Float64(m), k, t_on_g1)
+    end
+    return nothing
 end
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Sistema de espines (Sunny): 16 sitios, sin exchange ni anisotropía —
-# "entre los espines no debe haber interacciones, la única es Jsd".
-# ═══════════════════════════════════════════════════════════════════════════
+
+# Sistema de espines (Sunny): 16 sitios
 function init_spins()
     latvecs   = lattice_vectors(1.0, 1.0 * (1 + 1e-3), 4.0, 90, 90, 90)
     positions = [[0.5, 0.5, 0.0]]
@@ -133,12 +98,6 @@ function init_spins()
     return sys
 end
 
-"""
-Matriz (Nx×Ny) de espines para alimentar `update_H_e!`: cero en los sitios
-electrónicos impares (sin espín asociado), el valor actual de Sunny en los
-pares. `update_H_e!` de la librería recorre TODOS los sitios electrónicos,
-así que los impares deben entrar como vector nulo (acoplamiento sd = 0 ahí).
-"""
 function full_dipoles(sys)
     S = Matrix{SVector{3,Float64}}(undef, Nx, Ny)
     fill!(S, SVector{3,Float64}(0.0, 0.0, 0.0))
@@ -148,20 +107,6 @@ function full_dipoles(sys)
     return S
 end
 
-"Sobreescribe a la fuerza grupo1/grupo3 con su valor cinemático en el tiempo t."
-function force_driven!(sys, t::Float64)
-    for m in DRIVEN
-        x, k, t_on = drive_of(m)
-        sys.dipoles[m, 1, 1, 1] = pumped_spin(t, x, k, t_on)
-    end
-    return nothing
-end
-
-"""
-Campo efectivo -Jsd·σ_local sobre los espines libres (grupo2, grupo4), leído
-de `σx_i_now` (matriz N_sitios_electrónicos×3 en el paso actual). Los
-impulsados no reciben campo (se sobreescriben aparte en `force_driven!`).
-"""
 function update_H_s_free!(sys, σx_i_now)
     for m in FREE
         site = elec_site(m)
@@ -173,14 +118,12 @@ function update_H_s_free!(sys, σx_i_now)
     return nothing
 end
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Salida
-# ═══════════════════════════════════════════════════════════════════════════
-function save_outputs(obs, S_hist)
+#Salida
+function save_outputs(name::String, k::Float64, obs, S_hist)
     t  = obs.t
     Nt = length(t)
 
-    jldsave(joinpath(OUT, "oscillators_fields.jld2");
+    jldsave(joinpath(OUT, "oscillators_fields_$(name).jld2");
             t = t, s_i = S_hist,
             sigma_i = obs.σx_i, sigma_eq = obs.σx_i_eq, n_i = obs.n_i,
             I_alpha = obs.Iα, I_alpha_x = obs.Iαx,
@@ -189,7 +132,7 @@ function save_outputs(obs, S_hist)
             driven = DRIVEN, free = FREE,
             elec_sites = [elec_site(m) for m in 1:N_SPINS],
             params = (γ = γ, γso = γso, j_sd = j_sd, θmax = θ_max, Ω = Ω,
-                      k = k_wave, t_on_g3 = t_on_g3, t_on_g1 = t_on_g1,
+                      k = k, t_on_g3 = t_on_g3, t_on_g1 = t_on_g1,
                       t_rise = t_rise, t_relax = t_relax,
                       damping_relax = damping_relax, damping_dyn = damping_dyn,
                       kT = kT, β = β, N_λ1 = N_λ1, N_λ2 = N_λ2))
@@ -218,24 +161,14 @@ function save_outputs(obs, S_hist)
             data[i, col] = S_hist[3, m, i]; col += 1
         end
     end
-    writedlm(joinpath(OUT, "oscillators_trace.csv"), vcat(permutedims(header), data), ",")
-    @printf("  → oscillators_fields.jld2   oscillators_trace.csv\n")
+    writedlm(joinpath(OUT, "oscillators_trace_$(name).csv"), vcat(permutedims(header), data), ",")
+    @printf("  [%s] → oscillators_fields_%s.jld2   oscillators_trace_%s.csv\n", name, name, name)
     return nothing
 end
 
-# ═══════════════════════════════════════════════════════════════════════════
-function main()
-    BLAS.set_num_threads(8)
-    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
-
-    @printf("Cadena Rashba: Nx=%d (33=2·16+1)  γ=t=%.4f  γso=λ=%.4f  γ_eff=%.4f\n",
-            Nx, γ, γso, γ_eff)
-    @printf("Jsd=%.3f  θmax=%.2f°  Ω=%.3f  k=%.3f (=Ω/γ_eff)\n",
-            j_sd, rad2deg(θ_max), Ω, k_wave)
-    @printf("grupo1(onda)=%s  grupo2(libre)=%s  grupo3(driver)=%s  grupo4(libre)=%s\n",
-            GROUPS.g1, GROUPS.g2, GROUPS.g3, GROUPS.g4)
-    @printf("t_on_g3=%.0f  t_on_g1=%.0f  t_rise=%.0f  t_relax=%.0f  t_final=%.0f\n",
-            t_on_g3, t_on_g1, t_rise, t_relax, t_final)
+function run_case(cfg, Rλ, zλ)
+    name, k = cfg.name, cfg.k
+    @printf("[%s]  k=%+.4f  (Ω=%.3f, γ_eff=%.4f)\n", name, k, Ω, γ_eff)
     flush(stdout)
 
     p_model = ModelParamsTDNEGF(Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb,
@@ -279,7 +212,7 @@ function main()
 
         DifferentialEquations.step!(intg, Δt, true)
         Sunny.step!(sys, llg)
-        force_driven!(sys, intg.t)
+        force_driven!(sys, intg.t, k)
 
         dv = pointer_blocks(intg.u, p_blocks.dims_ρ_ab, p_blocks.aux_layout)
         ρ  = ρ_eq(E_F, β, p_model.H_ab, N_λ2, Nx, Ny, Nσ, N_orb)
@@ -298,14 +231,46 @@ function main()
         update_H_e!(p_model, site_ranges, full_dipoles(sys), j_sd)
 
         if i % 200 == 0
-            @printf("  t=%6.1f/%.0f   I_L=% .4e   I_R=% .4e   elapsed=%.0fs\n",
-                    intg.t, t_final, 0.5 * obs.Iα[1, i], -0.5 * obs.Iα[2, i],
+            @printf("  [%s] t=%6.1f/%.0f   I_L=% .4e   I_R=% .4e   elapsed=%.0fs\n",
+                    name, intg.t, t_final, 0.5 * obs.Iα[1, i], -0.5 * obs.Iα[2, i],
                     time() - started)
             flush(stdout)
         end
     end
 
-    save_outputs(obs, S_hist)
+    save_outputs(name, k, obs, S_hist)
+    @printf("[%s] listo en %.1f s\n", name, time() - started)
+    return nothing
+end
+
+
+function main()
+    sel = isempty(ARGS) ? RUNS : filter(c -> c.name in ARGS, RUNS)
+    isempty(sel) && error("Ninguna corrida coincide con $(ARGS). Opciones: " *
+                          join((c.name for c in RUNS), ", "))
+    BLAS.set_num_threads(4)
+
+    @printf("Cadena Rashba: Nx=%d (33=2·16+1)  γ=t=%.4f  γso=λ=%.4f  γ_eff=%.4f\n",
+            Nx, γ, γso, γ_eff)
+    @printf("Jsd=%.3f  θmax=%.2f°  Ω=%.3f  |k|=%.3f (=Ω/γ_eff)\n",
+            j_sd, rad2deg(θ_max), Ω, k_mag)
+    @printf("grupo1(onda)=%s  grupo2(libre)=%s  grupo3(driver)=%s  grupo4(libre)=%s\n",
+            GROUPS.g1, GROUPS.g2, GROUPS.g3, GROUPS.g4)
+    @printf("t_on_g3=%.0f  t_on_g1=%.0f  t_rise=%.0f  t_relax=%.0f  t_final=%.0f\n",
+            t_on_g3, t_on_g1, t_rise, t_relax, t_final)
+    @printf("Corridas: %s\nHilos de Julia: %d (se usan %d)\n",
+            join((c.name for c in sel), ", "), Threads.nthreads(), length(sel))
+    Threads.nthreads() < length(sel) &&
+        @printf("AVISO: hay %d corridas y solo %d hilos de Julia. Relanza con --threads=%d\n",
+                length(sel), Threads.nthreads(), length(sel))
+    flush(stdout)
+
+    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
+
+    started = time()
+    Threads.@threads for i in eachindex(sel)
+        run_case(sel[i], Rλ, zλ)
+    end
     @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT)
 end
 
