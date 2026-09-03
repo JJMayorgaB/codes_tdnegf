@@ -51,16 +51,19 @@ const kT            = 0.0
 #driving cinemático 
 const θ_max   = deg2rad(15.0)
 const Ω       = 0.5
-const k_mag   = Ω / γ_eff          
+const k_mag   = Ω / γ_eff
 const t_rise  = 10.0
 const t_on_g3 = 250.0
-const t_on_g1 = 500.0
+const t_on_g1 = 1000.0
 const t_relax = 250.0
-const t_final = 1200.0            
+const t_final = 3000.0
 
-const RUNS = (
-    (name = "kpos", k = +k_mag),
-    (name = "kneg", k = -k_mag),
+const R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
+
+const RUNS = Tuple(
+    (name = "r$(replace(string(r), "." => "p"))_k$(s > 0 ? "pos" : "neg")",
+     k = s * r * Ω / γ_eff)
+    for r in R_VALUES for s in (+1, -1)
 )
 
 
@@ -248,12 +251,12 @@ function main()
     sel = isempty(ARGS) ? RUNS : filter(c -> c.name in ARGS, RUNS)
     isempty(sel) && error("Ninguna corrida coincide con $(ARGS). Opciones: " *
                           join((c.name for c in RUNS), ", "))
-    BLAS.set_num_threads(4)
+    BLAS.set_num_threads(max(1, Sys.CPU_THREADS ÷ length(sel)))
 
     @printf("Cadena Rashba: Nx=%d (33=2·16+1)  γ=t=%.4f  γso=λ=%.4f  γ_eff=%.4f\n",
             Nx, γ, γso, γ_eff)
-    @printf("Jsd=%.3f  θmax=%.2f°  Ω=%.3f  |k|=%.3f (=Ω/γ_eff)\n",
-            j_sd, rad2deg(θ_max), Ω, k_mag)
+    @printf("Jsd=%.3f  θmax=%.2f°  Ω=%.3f  r=k/Ω ∈ %s\n",
+            j_sd, rad2deg(θ_max), Ω, R_VALUES)
     @printf("grupo1(onda)=%s  grupo2(libre)=%s  grupo3(driver)=%s  grupo4(libre)=%s\n",
             GROUPS.g1, GROUPS.g2, GROUPS.g3, GROUPS.g4)
     @printf("t_on_g3=%.0f  t_on_g1=%.0f  t_rise=%.0f  t_relax=%.0f  t_final=%.0f\n",
