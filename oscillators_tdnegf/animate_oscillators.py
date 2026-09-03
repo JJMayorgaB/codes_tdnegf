@@ -3,6 +3,7 @@
 import argparse
 import os
 import re
+import shutil
 from collections import deque
 
 import numpy as np
@@ -15,11 +16,17 @@ from matplotlib import animation, colors
 from matplotlib.colors import to_rgba
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
+# En el cluster no hay LaTeX instalado: si no está, se usa mathtext con la
+# fuente 'cm' (visualmente casi igual) en vez de reventar. En local, donde sí
+# hay MiKTeX, el comportamiento es exactamente el de siempre.
+HAS_LATEX = shutil.which('latex') is not None
+
 plt.rcParams.update({
-    'text.usetex': True,
+    'text.usetex': HAS_LATEX,
     'text.latex.preamble': r'\usepackage{amsmath}\usepackage[utf8]{inputenc}\usepackage[T1]{fontenc}',
+    'mathtext.fontset': 'cm',
     'font.family': 'serif',
-    'font.serif': ['Computer Modern'],
+    'font.serif': ['Computer Modern'] if HAS_LATEX else ['DejaVu Serif'],
     'font.size': 18,
     'axes.labelsize': 18,
     'axes.titlesize': 15,
