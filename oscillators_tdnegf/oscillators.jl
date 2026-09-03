@@ -32,15 +32,15 @@ const GROUPS = (
 const DRIVEN = vcat(collect(GROUPS.g1), collect(GROUPS.g3))
 const FREE   = vcat(collect(GROUPS.g2), collect(GROUPS.g4))
 
-# Parámetros físicos 
-const γso   = 0.1
+# Parmetros físicos 
+const γso   = 1.0/sqrt(2.0)
 const γ     = sqrt(1.0 - γso^2)     
 const γ_eff = sqrt(γ^2 + γso^2)
 
 const E_F = 0.0                    # sin bias
 const β   = 40.0
 const N_λ1, N_λ2 = 49, 20
-const j_sd = 0.25                   # mismo Jsd en los 16 sitios
+const j_sd = 0.25                   
 
 const Δt = 0.1
 
@@ -48,7 +48,7 @@ const damping_relax = 0.75
 const damping_dyn   = 0.05
 const kT            = 0.0         
 
-#driving cinemático 
+#driving
 const θ_max   = deg2rad(10.0)
 const Ω       = 0.05
 const k_mag   = Ω / γ_eff
