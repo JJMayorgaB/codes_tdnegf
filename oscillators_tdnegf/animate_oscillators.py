@@ -34,14 +34,27 @@ plt.rcParams.update({
 })
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output')
+BASE_OUT = os.path.join(SCRIPT_DIR, 'output')
+
+
+def _auto_run_tag():
+    """Si output/ tiene una única subcarpeta de corrida, se usa por defecto."""
+    if not os.path.isdir(BASE_OUT):
+        return None
+    subdirs = [d for d in os.listdir(BASE_OUT) if os.path.isdir(os.path.join(BASE_OUT, d))]
+    return subdirs[0] if len(subdirs) == 1 else None
+
+
+def r_tag(r):
+    return 'r' + str(r).replace('.', 'p')
+
 
 CMAP = 'seismic'
 TRAIL_LEN = 20  # 3D-panel trail length, only for tracked spins
 
 # Protocol time milestones (see oscillators.jl)
-T_ON_G3 = 250.0   # group3 uniform precession turns on
-T_ON_G1 = 1000.0  # group1 traveling wave turns on
+T_ON_G3 = 500.0    # group3 uniform precession turns on
+T_ON_G1 = 2000.0   # group1 traveling wave turns on
 
 # groups (spin index, 1-based) -- see oscillators.jl
 G1 = list(range(1, 6))     # traveling wave
@@ -110,8 +123,8 @@ def build_figure(t, spins, sites, S, title_label):
     # índice (0-based, en el orden de `spins`) de cada espín rastreado
     track_idx = [int(np.where(spins == m)[0][0]) for m, _, _ in TRACKED]
 
-    vmax = max(1e-3, float(np.nanmax(np.abs(S[:, :, 0]))))
-    norm = colors.Normalize(vmin=-vmax, vmax=vmax)
+    # Los quiver se colorean por S_z, con la escala fija en [-1,1].
+    norm = colors.Normalize(vmin=-1.0, vmax=1.0)
     cmap = plt.get_cmap(CMAP)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
@@ -165,7 +178,7 @@ def build_figure(t, spins, sites, S, title_label):
     quiver_holder = {'outline': None, 'fill': None}
 
     cbar = fig.colorbar(sm, cax=cax, format='%.2f')
-    cbar.ax.set_title(r'$S_x$', pad=10, fontsize=12)
+    cbar.ax.set_title(r'$S_z$', pad=10, fontsize=12)
     cbar.ax.tick_params(direction='in', labelsize=9, pad=2)
 
     # --- spin-tip panel in the (S_x,S_y) plane -----------------------------
@@ -220,7 +233,7 @@ def build_figure(t, spins, sites, S, title_label):
                 trail_collections[j].set_colors(rgba)
                 trail_collections[j].set_linewidths(0.8 + 1.4 * a)
 
-        colors_now = cmap(norm(S[idx, :, 0]))
+        colors_now = cmap(norm(S[idx, :, 2]))
         colors_now = np.array(colors_now)
         colors_now[driven_idx] = to_rgba('#7e2bb6')
         # dark outline first (so near-white S_x~0 arrows stay visible on the
@@ -254,9 +267,16 @@ def build_figure(t, spins, sites, S, title_label):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--run', required=True, choices=['kpos', 'kneg'])
-    ap.add_argument('--data-dir', default=DEFAULT_DIR)
-    ap.add_argument('--outdir', default=DEFAULT_DIR)
+    ap.add_argument('--run-tag', default=None,
+                     help='subcarpeta de output/ con la etiqueta de parámetros '
+                          '(gso..._jsd..._th..._Om...). Si se omite y output/ tiene '
+                          'una única subcarpeta, se usa esa.')
+    ap.add_argument('--r', type=float, required=True,
+                     help='valor de r=k/Omega a animar (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)')
+    ap.add_argument('--k', required=True, choices=['pos', 'neg'],
+                     help='signo de k')
+    ap.add_argument('--data-dir', default=None, help='override directo (ignora --run-tag)')
+    ap.add_argument('--outdir', default=None, help='override directo (ignora --run-tag)')
     ap.add_argument('--fps', type=int, default=30)
     ap.add_argument('--frame-skip', type=int, default=5,
                      help='use 1 out of every N CSV rows as a frame')
@@ -264,11 +284,27 @@ def main():
     ap.add_argument('--t-max', type=float, default=None)
     ap.add_argument('--dpi', type=int, default=100)
     args = ap.parse_args()
-    os.makedirs(args.outdir, exist_ok=True)
 
-    csv_path = os.path.join(args.data_dir, f'oscillators_trace_{args.run}.csv')
+    run_tag = args.run_tag or _auto_run_tag()
+    if (args.data_dir is None or args.outdir is None) and run_tag is None:
+        opciones = sorted(os.listdir(BASE_OUT)) if os.path.isdir(BASE_OUT) else []
+        raise SystemExit(
+            'No se pudo determinar la carpeta de la corrida: pasa --run-tag <etiqueta> '
+            '(o --data-dir/--outdir explícitos). Subcarpetas en output/: '
+            + (', '.join(opciones) if opciones else '(output/ no existe o está vacío)'))
+
+    tag = r_tag(args.r)
+    run_name = f'{tag}_k{args.k}'
+    data_dir = args.data_dir or os.path.join(BASE_OUT, run_tag)
+    # las figuras/animaciones de cada r van en output/<run_tag>/<r_tag>/,
+    # igual que en plot_spin_currents.py
+    outdir = args.outdir or os.path.join(BASE_OUT, run_tag, tag)
+    os.makedirs(outdir, exist_ok=True)
+    print(f'run_tag = {run_tag}\nrun     = {run_name}\noutdir  = {outdir}')
+
+    csv_path = os.path.join(data_dir, f'oscillators_trace_{run_name}.csv')
     t, spins, sites, S = load_chain(csv_path)
-    print(f'  [{args.run}] read {csv_path}  ({len(t)} steps, {len(sites)} spins)')
+    print(f'  [{run_name}] read {csv_path}  ({len(t)} steps, {len(sites)} spins)')
 
     sel = np.ones(len(t), dtype=bool)
     if args.t_min is not None:
@@ -278,7 +314,8 @@ def main():
     t, S = t[sel], S[sel]
 
     frame_idx = list(range(0, len(t), args.frame_skip))
-    label = r'$k{>}0$ (kpos)' if args.run == 'kpos' else r'$k{<}0$ (kneg)'
+    ksign = r'$k{>}0$' if args.k == 'pos' else r'$k{<}0$'
+    label = rf'$r=k/\Omega={args.r}$, {ksign}'
     fig, draw = build_figure(t, spins, sites, S, label)
 
     def update(fi):
@@ -287,7 +324,7 @@ def main():
     n_frames = len(frame_idx)
     print(f'  frames: {n_frames}, fps: {args.fps}, duration~{n_frames/args.fps:.1f}s')
     ani = animation.FuncAnimation(fig, update, frames=n_frames, blit=False)
-    out_path = os.path.join(args.outdir, f'anim_oscillators_{args.run}.mp4')
+    out_path = os.path.join(outdir, f'anim_oscillators_{run_name}.mp4')
     writer = animation.FFMpegWriter(
         fps=args.fps, bitrate=2600, codec='libx264',
         extra_args=['-preset', 'veryfast', '-threads', '1',
