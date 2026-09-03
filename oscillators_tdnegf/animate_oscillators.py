@@ -16,6 +16,8 @@ from matplotlib import animation, colors
 from matplotlib.colors import to_rgba
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
+import run_config as rc
+
 # En el cluster no hay LaTeX instalado: si no está, se usa mathtext con la
 # fuente 'cm' (visualmente casi igual) en vez de reventar. En local, donde sí
 # hay MiKTeX, el comportamiento es exactamente el de siempre.
@@ -40,18 +42,6 @@ plt.rcParams.update({
     'axes.axisbelow': True,
 })
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_OUT = os.path.join(SCRIPT_DIR, 'output')
-
-
-def _auto_run_tag():
-    """Si output/ tiene una única subcarpeta de corrida, se usa por defecto."""
-    if not os.path.isdir(BASE_OUT):
-        return None
-    subdirs = [d for d in os.listdir(BASE_OUT) if os.path.isdir(os.path.join(BASE_OUT, d))]
-    return subdirs[0] if len(subdirs) == 1 else None
-
-
 def r_tag(r):
     return 'r' + str(r).replace('.', 'p')
 
@@ -59,7 +49,7 @@ def r_tag(r):
 CMAP = 'seismic'
 TRAIL_LEN = 20  # 3D-panel trail length, only for tracked spins
 
-# Protocol time milestones (see oscillators.jl)
+# Overwritten in main() with the run's actual values (params.txt / oscillators.jl)
 T_ON_G3 = 500.0    # group3 uniform precession turns on
 T_ON_G1 = 2000.0   # group1 traveling wave turns on
 
@@ -275,9 +265,8 @@ def build_figure(t, spins, sites, S, title_label):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--run-tag', default=None,
-                     help='subcarpeta de output/ con la etiqueta de parámetros '
-                          '(gso..._jsd..._th..._Om...). Si se omite y output/ tiene '
-                          'una única subcarpeta, se usa esa.')
+                     help='subcarpeta de output/. Por defecto se usa la que '
+                          'corresponde a los parámetros actuales de oscillators.jl.')
     ap.add_argument('--r', type=float, required=True,
                      help='valor de r=k/Omega a animar (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)')
     ap.add_argument('--k', required=True, choices=['pos', 'neg'],
@@ -292,22 +281,19 @@ def main():
     ap.add_argument('--dpi', type=int, default=100)
     args = ap.parse_args()
 
-    run_tag = args.run_tag or _auto_run_tag()
-    if (args.data_dir is None or args.outdir is None) and run_tag is None:
-        opciones = sorted(os.listdir(BASE_OUT)) if os.path.isdir(BASE_OUT) else []
-        raise SystemExit(
-            'No se pudo determinar la carpeta de la corrida: pasa --run-tag <etiqueta> '
-            '(o --data-dir/--outdir explícitos). Subcarpetas en output/: '
-            + (', '.join(opciones) if opciones else '(output/ no existe o está vacío)'))
-
+    run_dir = rc.resolve_run_dir(args.run_tag)
     tag = r_tag(args.r)
     run_name = f'{tag}_k{args.k}'
-    data_dir = args.data_dir or os.path.join(BASE_OUT, run_tag)
-    # las figuras/animaciones de cada r van en output/<run_tag>/<r_tag>/,
-    # igual que en plot_spin_currents.py
-    outdir = args.outdir or os.path.join(BASE_OUT, run_tag, tag)
+    data_dir = args.data_dir or run_dir
+    # las animaciones de cada r van en output/<run_tag>/<r_tag>/, igual que
+    # las figuras de plot_spin_currents.py
+    outdir = args.outdir or os.path.join(run_dir, tag)
     os.makedirs(outdir, exist_ok=True)
-    print(f'run_tag = {run_tag}\nrun     = {run_name}\noutdir  = {outdir}')
+
+    global T_ON_G3, T_ON_G1
+    T_ON_G3, T_ON_G1, _ = rc.protocol_times(data_dir)
+    print(f'run_tag = {os.path.basename(run_dir)}   run = {run_name}\n'
+          f't_on_g3 = {T_ON_G3}   t_on_g1 = {T_ON_G1}')
 
     csv_path = os.path.join(data_dir, f'oscillators_trace_{run_name}.csv')
     t, spins, sites, S = load_chain(csv_path)
