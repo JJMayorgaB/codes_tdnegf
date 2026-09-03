@@ -53,10 +53,10 @@ const θ_max   = deg2rad(15.0)
 const Ω       = 0.5
 const k_mag   = Ω / γ_eff          
 const t_rise  = 10.0
-const t_on_g3 = 100.0
-const t_on_g1 = 300.0
-const t_relax = 100.0
-const t_final = 700.0            
+const t_on_g3 = 250.0
+const t_on_g1 = 500.0
+const t_relax = 250.0
+const t_final = 1200.0            
 
 const RUNS = (
     (name = "kpos", k = +k_mag),
