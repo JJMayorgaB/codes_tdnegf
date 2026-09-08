@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -9,11 +10,16 @@ import matplotlib.ticker as mticker
 
 import run_config as rc
 
+# En el cluster no hay LaTeX: si no está, se usa mathtext con fuente 'cm'
+# (visualmente casi igual). En local, con MiKTeX, no cambia nada.
+HAS_LATEX = shutil.which('latex') is not None
+
 plt.rcParams.update({
-    'text.usetex': True,
+    'text.usetex': HAS_LATEX,
     'text.latex.preamble': r'\usepackage{amsmath}\usepackage[utf8]{inputenc}',
+    'mathtext.fontset': 'cm',
     'font.family': 'serif',
-    'font.serif': ['Computer Modern'],
+    'font.serif': ['Computer Modern'] if HAS_LATEX else ['DejaVu Serif'],
     'font.size': 20,
     'axes.labelsize': 20,
     'axes.titlesize': 20,
