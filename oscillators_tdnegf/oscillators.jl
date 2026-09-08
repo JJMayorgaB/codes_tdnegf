@@ -21,7 +21,7 @@ const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 run_tag() = "gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))"
 
 # Geometría
-const N_SPINS   = 20
+const N_SPINS   = 26
 const Nx, Ny    = 2 * N_SPINS + 1, 1        # 33 sitios electrónicos
 const Nσ, N_orb = 2, 1
 
@@ -30,9 +30,9 @@ const Nσ, N_orb = 2, 1
 
 const GROUPS = (
     g1 = 1:5,      # onda viajera,        arranca en t_on_g1
-    g2 = 6:12,     # libre (LLG)
-    g3 = 13:13,    # precesión uniforme,  arranca en t_on_g3
-    g4 = 14:20,    # libre (LLG)
+    g2 = 6:15,     # libre (LLG)
+    g3 = 16:16,    # precesión uniforme,  arranca en t_on_g3
+    g4 = 17:26,    # libre (LLG)
 )
 const DRIVEN = vcat(collect(GROUPS.g1), collect(GROUPS.g3))
 const FREE   = vcat(collect(GROUPS.g2), collect(GROUPS.g4))
@@ -58,10 +58,10 @@ const θ_max   = deg2rad(10.0)
 const Ω       = 0.01
 const k_mag   = Ω / γ_eff
 const t_rise  = 630.0
-const t_on_g3 = 5000.0
-const t_on_g1 = 10000.0
-const t_relax = 5000.0
-const t_final = 10000.0
+const t_on_g3 = 10000.0
+const t_on_g1 = 20000.0
+const t_relax = 10000.0
+const t_final = 20000.0
 
 const R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
 
