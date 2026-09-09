@@ -36,6 +36,18 @@ def parse_julia_consts(jl_path=JL_PATH):
     return out
 
 
+def parse_groups(jl_path=JL_PATH):
+    """Grupos de espines definidos en el const GROUPS de oscillators.jl."""
+    with open(jl_path, encoding='utf-8') as f:
+        src = f.read()
+    groups = {}
+    for name in ('g1', 'g2', 'g3', 'g4'):
+        m = re.search(name + r'\s*=\s*(\d+)\s*:\s*(\d+)', src)
+        if m:
+            groups[name] = list(range(int(m.group(1)), int(m.group(2)) + 1))
+    return groups
+
+
 def _fmt(x):
     return repr(round(float(x), 4)).replace('.', 'p').replace('-', 'm')
 

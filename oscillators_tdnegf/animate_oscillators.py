@@ -53,18 +53,24 @@ TRAIL_LEN = 20  # 3D-panel trail length, only for tracked spins
 T_ON_G3 = 500.0    # group3 uniform precession turns on
 T_ON_G1 = 2000.0   # group1 traveling wave turns on
 
-# groups (spin index, 1-based) -- see oscillators.jl
-G1 = list(range(1, 6))     # traveling wave
-G3 = [11]                  # uniform precession (driver)
+# Grupos leidos de oscillators.jl (fuente unica de verdad): hardcodearlos
+# aqui hacia que las etiquetas quedaran desfasadas al cambiar la geometria.
+GROUPS = rc.parse_groups()
+G1 = GROUPS['g1']          # traveling wave
+G3 = GROUPS['g3']          # uniform precession (driver)
 DRIVEN = G1 + G3
 
-# tracked spins: (spin index 1-based, label, color)
-TRACKED = [
-    (1,  r'g1, site 2 (Left, Wave)',    '#7e2bb6'),
-    (8,  r'g2, site 16 (Free)',         '#2266aa'),
-    (11, r'g3, site 22 (Driver)',       '#c1272d'),
-    (16, r'g4, site 32 (Right, Free)',  '#2a9d5c'),
+# tracked spins: uno por grupo -- extremo izquierdo, medio de g2, driver, extremo derecho
+_TRACK_SPEC = [
+    ('g1', lambda g: g[0],             'Left, Wave',  '#7e2bb6'),
+    ('g2', lambda g: g[len(g) // 2],   'Free',        '#2266aa'),
+    ('g3', lambda g: g[0],             'Driver',      '#c1272d'),
+    ('g4', lambda g: g[-1],            'Right, Free', '#2a9d5c'),
 ]
+TRACKED = [(pick(GROUPS[name]),
+            f'{name}, site {2 * pick(GROUPS[name])} ({desc})',
+            color)
+           for name, pick, desc, color in _TRACK_SPEC if GROUPS.get(name)]
 
 
 def detect_spin_columns(columns):
