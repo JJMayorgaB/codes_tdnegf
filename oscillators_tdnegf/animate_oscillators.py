@@ -324,9 +324,13 @@ def main():
     print(f'  frames: {n_frames}, fps: {args.fps}, duration~{n_frames/args.fps:.1f}s')
     ani = animation.FuncAnimation(fig, update, frames=n_frames, blit=False)
     out_path = os.path.join(outdir, f'anim_oscillators_{run_name}.mp4')
+    # -pix_fmt yuv420p es obligatorio para que reproduzca en Windows (Peliculas y
+    # TV, Media Player): su decodificador H.264 no soporta yuv444p, que es lo que
+    # sale por defecto desde RGBA. El pad a dimensiones pares lo exige yuv420p.
     writer = animation.FFMpegWriter(
         fps=args.fps, bitrate=2600, codec='libx264',
         extra_args=['-preset', 'veryfast', '-threads', '1',
+                    '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-level', '4.0',
                     '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2'])
     ani.save(out_path, writer=writer, dpi=args.dpi)
     print(f'  → {out_path}  ({n_frames} cuadros)')
