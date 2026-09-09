@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Config compartida por plot_spin_currents.py y animate_oscillators.py.
 
-La carpeta de salida y los tiempos del protocolo se derivan de oscillators.jl
-(fuente única de verdad) y del params.txt de cada corrida, para que los scripts
-nunca queden desincronizados de los datos que están graficando.
+Variante SIN g1: la cadena es g2 (libres) | g3 (driver) | g4 (libres), asi que
+no hay t_on_g1 ni barrido en k. La carpeta de salida y los tiempos del protocolo
+se derivan de oscillators.jl y del params.txt de cada corrida, para que los
+scripts nunca queden desincronizados de los datos que estan graficando.
 """
 
 import math
@@ -15,7 +16,7 @@ JL_PATH = os.path.join(SCRIPT_DIR, 'oscillators.jl')
 BASE_OUT = os.path.join(SCRIPT_DIR, 'output')
 
 _NAMES = {'gso': 'γso', 'jsd': 'j_sd', 'theta': 'θ_max', 'Omega': 'Ω',
-          't_rise': 't_rise', 't_on_g3': 't_on_g3', 't_on_g1': 't_on_g1',
+          't_rise': 't_rise', 't_on_g3': 't_on_g3',
           't_relax': 't_relax', 't_final': 't_final'}
 
 
@@ -33,15 +34,19 @@ def parse_julia_consts(jl_path=JL_PATH):
         m = re.search(r'^const\s+' + re.escape(jname) + r'\s*=\s*(.+)$', src, re.M)
         if m:
             out[key] = _eval_julia(m.group(1))
+    m = re.search(r'^const\s+N_SPINS\s*=\s*(\d+)', src, re.M)
+    if m:
+        out['N_SPINS'] = int(m.group(1))
     return out
 
 
 def parse_groups(jl_path=JL_PATH):
-    """Grupos de espines definidos en el const GROUPS de oscillators.jl."""
+    """Grupos de espines definidos en el const GROUPS de oscillators.jl.
+    Aqui solo existen g2, g3 y g4 (g1 fue eliminado)."""
     with open(jl_path, encoding='utf-8') as f:
         src = f.read()
     groups = {}
-    for name in ('g1', 'g2', 'g3', 'g4'):
+    for name in ('g2', 'g3', 'g4'):
         m = re.search(name + r'\s*=\s*(\d+)\s*:\s*(\d+)', src)
         if m:
             groups[name] = list(range(int(m.group(1)), int(m.group(2)) + 1))
@@ -53,8 +58,8 @@ def _fmt(x):
 
 
 def run_tag(c):
-    """Réplica exacta de run_tag() en oscillators.jl."""
-    return (f"gso{_fmt(c['gso'])}_jsd{_fmt(c['jsd'])}"
+    """Replica exacta de param_tag() en oscillators.jl."""
+    return (f"n{int(c['N_SPINS'])}_gso{_fmt(c['gso'])}_jsd{_fmt(c['jsd'])}"
             f"_th{round(math.degrees(c['theta']))}deg_Om{_fmt(c['Omega'])}")
 
 
@@ -78,9 +83,7 @@ def protocol(run_dir):
     """Tiempos del protocolo de una corrida, como dict.
 
     Combina el params.txt de la carpeta con los const de oscillators.jl. Las
-    claves que no existan en ninguna de las dos fuentes valen None: en el modo
-    prep, por ejemplo, t_on_g1 no existe porque g1 nunca se enciende, y quien
-    lo use tiene que contemplar ese caso.
+    claves que no existan en ninguna de las dos fuentes valen None.
     """
     p = load_params_txt(run_dir)
     try:
@@ -96,7 +99,6 @@ def protocol(run_dir):
 
     return {
         't_on_g3': pick('t_on_g3', 't_on_g3'),
-        't_on_g1': pick('t_on_g1', 't_on_g1'),
         't_rise':  pick('t_rise', 't_rise'),
         't_relax': pick('t_relax', 't_relax'),
         't_final': pick('t_final', 't_final'),
@@ -104,13 +106,9 @@ def protocol(run_dir):
     }
 
 
-def resolve_run_dir(run_tag_arg=None, base_out=BASE_OUT, prefix='pumping_'):
-    """Carpeta de la corrida: --run-tag explícito > la que corresponde a los
-    parámetros actuales de oscillators.jl > la única subcarpeta que haya.
-
-    Las carpetas llevan prefijo segun el modo del .jl: steady_state_<tag> para
-    la preparacion y pumping_<tag> para las ramas. Se acepta --run-tag con o
-    sin el prefijo."""
+def resolve_run_dir(run_tag_arg=None, base_out=BASE_OUT, prefix='steady_state_'):
+    """Carpeta de la corrida: --run-tag explicito > la que corresponde a los
+    parametros actuales de oscillators.jl > la unica subcarpeta que haya."""
     if run_tag_arg:
         d = os.path.join(base_out, run_tag_arg)
         if os.path.isdir(d):

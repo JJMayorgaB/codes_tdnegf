@@ -39,27 +39,21 @@ plt.rcParams.update({
     'axes.axisbelow': True,
 })
 
-def r_tag(r):
-    return 'r' + str(r).replace('.', 'p')
-
-
 CMAP = 'seismic'
 TRAIL_LEN = 20  # 3D-panel trail length, only for tracked spins
 
-# Overwritten in main() with the run's actual values (params.txt / oscillators.jl)
-T_ON_G3 = 500.0    # group3 uniform precession turns on
-T_ON_G1 = 2000.0   # group1 traveling wave turns on
+# Overwritten in main() with the run's actual value (params.txt / oscillators.jl)
+T_ON_G3 = 5000.0   # group3 uniform precession turns on
 
-# Grupos leidos de oscillators.jl (fuente unica de verdad): hardcodearlos
-# aqui hacia que las etiquetas quedaran desfasadas al cambiar la geometria.
+# Grupos leidos de oscillators.jl (fuente unica de verdad). En esta variante no
+# existe g1: la cadena es g2 (libres) | g3 (driver) | g4 (libres).
 GROUPS = rc.parse_groups()
-G1 = GROUPS['g1']          # traveling wave
 G3 = GROUPS['g3']          # uniform precession (driver)
-DRIVEN = G1 + G3
+DRIVEN = list(G3)
 
-# tracked spins: uno por grupo -- extremo izquierdo, medio de g2, driver, extremo derecho
+# tracked spins: extremo izquierdo, medio de g2, driver, extremo derecho
 _TRACK_SPEC = [
-    ('g1', lambda g: g[0],             'Left, Wave',  '#7e2bb6'),
+    ('g2', lambda g: g[0],             'Left, Free',  '#7e2bb6'),
     ('g2', lambda g: g[len(g) // 2],   'Free',        '#2266aa'),
     ('g3', lambda g: g[0],             'Driver',      '#c1272d'),
     ('g4', lambda g: g[-1],            'Right, Free', '#2a9d5c'),
@@ -107,11 +101,7 @@ def _fmt2d(ax, xlabel=None, ylabel=None):
 
 
 def _milestones(ax):
-    # T_ON_G1 es None en el modo prep (g1 nunca se enciende): se omite la linea.
-    if T_ON_G3 is not None:
-        ax.axvline(T_ON_G3, color='k', lw=1.0, ls=':', alpha=0.7)
-    if T_ON_G1 is not None:
-        ax.axvline(T_ON_G1, color='k', lw=1.0, ls='--', alpha=0.7)
+    ax.axvline(T_ON_G3, color='k', lw=1.0, ls=':', alpha=0.7)
 
 
 def build_figure(t, spins, sites, S, title_label):
@@ -154,6 +144,11 @@ def build_figure(t, spins, sites, S, title_label):
     ax3d.set_zticks([-1, 0, 1])
     ax3d.set_title(title_label)
 
+    # The "t=... | stage" part changes every frame; routing it through real
+    # LaTeX (like set_title did before) means one latex.exe subprocess call
+    # per frame, and MiKTeX intermittently chokes under that many rapid
+    # calls in a row. Keep it as plain (non-LaTeX) text instead -- title_label
+    # and every other label still render through real LaTeX, just once.
     dyn_text = fig.text(0.5, 0.995, '', ha='center', va='top', fontsize=13,
                          usetex=False, fontfamily='DejaVu Serif')
 
@@ -251,12 +246,8 @@ def build_figure(t, spins, sites, S, title_label):
 
         ts_cursor.set_xdata([t[idx], t[idx]])
 
-        if T_ON_G3 is not None and t[idx] < T_ON_G3:
-            stage = 'Relaxation (Drive off)'
-        elif T_ON_G1 is None or t[idx] < T_ON_G1:
-            stage = 'g3 (Uniform precession) On'
-        else:
-            stage = 'g1 (Traveling wave) + g3 On'
+        stage = ('Relaxation (Drive off)' if t[idx] < T_ON_G3
+                 else 'g3 (Uniform precession) On')
         dyn_text.set_text(f't = {t[idx]:.1f}   |   {stage}')
         return ()
 
@@ -268,14 +259,8 @@ def main():
     ap.add_argument('--run-tag', default=None,
                      help='subcarpeta de output/. Por defecto se usa la que '
                           'corresponde a los parámetros actuales de oscillators.jl.')
-    ap.add_argument('--r', type=float, default=None,
-                     help='valor de r=k/Omega a animar (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)')
-    ap.add_argument('--k', default=None, choices=['pos', 'neg'],
-                     help='signo de k')
-    ap.add_argument('--trace', default=None,
-                     help='CSV unico a animar (p.ej. prep_trace.csv). Alternativa '
-                          'a --r/--k, para la corrida de preparacion.')
-    ap.add_argument('--data-dir', default=None, help='override directo (ignora --run-tag)')
+    ap.add_argument('--trace', default='prep_trace.csv',
+                     help='nombre del CSV dentro de la carpeta, o ruta completa')
     ap.add_argument('--outdir', default=None, help='override directo (ignora --run-tag)')
     ap.add_argument('--fps', type=int, default=30)
     ap.add_argument('--frame-skip', type=int, default=5,
@@ -285,33 +270,19 @@ def main():
     ap.add_argument('--dpi', type=int, default=100)
     args = ap.parse_args()
 
-    if args.trace is None and (args.r is None or args.k is None):
-        raise SystemExit('Hace falta --r y --k (rama de pumping), o bien --trace '
-                         '(p.ej. --trace prep_trace.csv para la preparacion).')
-
-    prefix = 'steady_state_' if args.trace else 'pumping_'
-    run_dir = rc.resolve_run_dir(args.run_tag, prefix=prefix)
-    data_dir = args.data_dir or run_dir
-
-    if args.trace:
-        csv_path = (args.trace if os.path.isabs(args.trace)
-                    else os.path.join(data_dir, args.trace))
-        run_name = os.path.splitext(os.path.basename(csv_path))[0]
-        outdir = args.outdir or os.path.join(run_dir, 'figs')
-    else:
-        tag = r_tag(args.r)
-        run_name = f'{tag}_k{args.k}'
-        csv_path = os.path.join(data_dir, f'oscillators_trace_{run_name}.csv')
-        # las animaciones de cada r van en output/<run_tag>/<r_tag>/, igual que
-        # las figuras de plot_spin_currents.py
-        outdir = args.outdir or os.path.join(run_dir, tag)
+    run_dir = rc.resolve_run_dir(args.run_tag)
+    csv_path = (args.trace if os.path.isabs(args.trace)
+                else os.path.join(run_dir, args.trace))
+    run_name = os.path.splitext(os.path.basename(csv_path))[0]
+    # las figuras y animaciones van en output/<run_tag>/figs/
+    outdir = args.outdir or os.path.join(run_dir, 'figs')
     os.makedirs(outdir, exist_ok=True)
 
-    global T_ON_G3, T_ON_G1
-    prot = rc.protocol(data_dir)
-    T_ON_G3, T_ON_G1 = prot['t_on_g3'], prot['t_on_g1']
-    print(f'run_tag = {os.path.basename(run_dir)}   run = {run_name}\n'
-          f't_on_g3 = {T_ON_G3}   t_on_g1 = {T_ON_G1}')
+    global T_ON_G3
+    T_ON_G3 = rc.protocol(run_dir)['t_on_g3']
+    print(f'run_tag = {os.path.basename(run_dir)}   trace = {run_name}\n'
+          f't_on_g3 = {T_ON_G3}')
+
     t, spins, sites, S = load_chain(csv_path)
     print(f'  [{run_name}] read {csv_path}  ({len(t)} steps, {len(sites)} spins)')
 
@@ -323,11 +294,7 @@ def main():
     t, S = t[sel], S[sel]
 
     frame_idx = list(range(0, len(t), args.frame_skip))
-    if args.trace:
-        label = r'Steady state preparation ($g_3$ driver only)'
-    else:
-        ksign = r'$k{>}0$' if args.k == 'pos' else r'$k{<}0$'
-        label = rf'$r=k/\Omega={args.r}$, {ksign}'
+    label = r'Steady state preparation ($g_3$ driver only)'
     fig, draw = build_figure(t, spins, sites, S, label)
 
     def update(fi):

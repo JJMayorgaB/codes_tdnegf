@@ -10,8 +10,6 @@ import matplotlib.ticker as mticker
 
 import run_config as rc
 
-# En el cluster no hay LaTeX: si no está, se usa mathtext con fuente 'cm'
-# (visualmente casi igual). En local, con MiKTeX, no cambia nada.
 HAS_LATEX = shutil.which('latex') is not None
 
 plt.rcParams.update({
@@ -72,8 +70,11 @@ def _fmt_axes(ax, xlabel=None, ylabel=None):
 
 
 def _milestones(ax):
-    ax.axvline(T_ON_G3, color='k', lw=1.0, ls=':', alpha=0.8)
-    ax.axvline(T_ON_G1, color='k', lw=1.0, ls='--', alpha=0.8)
+    # T_ON_G1 es None en el modo prep (g1 nunca se enciende): se omite la linea.
+    if T_ON_G3 is not None:
+        ax.axvline(T_ON_G3, color='k', lw=1.0, ls=':', alpha=0.8)
+    if T_ON_G1 is not None:
+        ax.axvline(T_ON_G1, color='k', lw=1.0, ls='--', alpha=0.8)
 
 
 R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
@@ -83,13 +84,69 @@ def r_tag(r):
     return 'r' + str(r).replace('.', 'p')
 
 
-def load_run(data_dir, name):
-    path = os.path.join(data_dir, f'oscillators_trace_{name}.csv')
+def load_csv(path, label=''):
     cur = [c for _, cL, cR, _ in ROWS for c in (cL, cR)]
     dtypes = {'t': 'float64', **{c: 'float32' for c in cur}}
     df = pd.read_csv(path, usecols=['t'] + cur, dtype=dtypes)
-    print(f'  [{name}] leído {path}  ({len(df)} filas)')
+    print(f'  [{label}] leído {path}  ({len(df)} filas)')
     return df
+
+
+def load_run(data_dir, name):
+    return load_csv(os.path.join(data_dir, f'oscillators_trace_{name}.csv'), name)
+
+
+def plot_single(df, outdir, stem, title=None, tmin=None, delta=False):
+    """Una sola trayectoria (sin comparacion kpos/kneg): usado para el prep."""
+    d = _window(df, tmin)
+    fig, axes = plt.subplots(len(ROWS), 1, figsize=(12, 10), sharex=True)
+    if title:
+        fig.suptitle(title)
+    for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
+        ax = axes[row_i]
+        if delta:
+            ax.axhline(0.0, color='0.6', lw=0.9, ls='-')
+            ax.plot(d['t'], d[colR] - d[colL], '-', color=C_R, lw=1.5)
+        else:
+            ax.plot(d['t'], d[colL], '-', color=C_L, lw=1.5, label=r'$L$')
+            ax.plot(d['t'], d[colR], '-', color=C_R, lw=1.5, label=r'$R$')
+        if tmin is None:
+            _milestones(ax)
+        ax.set_xlim(d['t'].min(), d['t'].max())
+        _fmt_axes(ax,
+                  xlabel=(r'$t\ (\hbar/\gamma)$' if row_i == len(ROWS) - 1 else None),
+                  ylabel=_delta_label(ylab) if delta else ylab)
+        if row_i == 0 and not delta:
+            ax.legend(frameon=True, edgecolor='black', framealpha=0.0, fancybox=False,
+                      loc='best', borderpad=0.5, handlelength=2.0, labelspacing=0.3,
+                      ncol=2)
+    plt.tight_layout()
+    _save(fig, outdir, stem)
+
+
+def plot_single_fourier(df, outdir, stem, t_from, title=None):
+    fig, axes = plt.subplots(len(ROWS), 1, figsize=(12, 10), sharex=True)
+    if title:
+        fig.suptitle(title)
+    t = df['t'].to_numpy()
+    for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
+        ax = axes[row_i]
+        wL, aL = _fft_amp(t, df[colL].to_numpy(), t_from)
+        wR, aR = _fft_amp(t, df[colR].to_numpy(), t_from)
+        ax.plot(wL / OMEGA, aL**2, '-', color=C_L, lw=1.3, label=r'$L$')
+        ax.plot(wR / OMEGA, aR**2, '-', color=C_R, lw=1.3, label=r'$R$')
+        for h in range(1, 5):
+            ax.axvline(h, color='k', lw=0.8, ls=':', alpha=0.35, zorder=0)
+        ax.set_xlim(0.0, 4.5)
+        _fmt_axes(ax,
+                  xlabel=(r'$\omega/\Omega$' if row_i == len(ROWS) - 1 else None),
+                  ylabel=FFT_LABELS[tag])
+        if row_i == 0:
+            ax.legend(frameon=True, edgecolor='black', framealpha=0.0, fancybox=False,
+                      loc='best', borderpad=0.5, handlelength=2.0, labelspacing=0.3,
+                      ncol=2)
+    plt.tight_layout()
+    _save(fig, outdir, stem)
 
 
 def _save(fig, outdir, stem):
@@ -115,10 +172,10 @@ def plot_currents(dpos, dneg, outdir, stem, title=None, tmin=None):
         fig.suptitle(title)
     for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
         ax = axes[row_i]
-        ax.plot(dpos['t'], dpos[colL], '-',  color=C_L, lw=1.5, label=r'$L$, $k{>}0$')
-        ax.plot(dpos['t'], dpos[colR], '-',  color=C_R, lw=1.5, label=r'$R$, $k{>}0$')
-        ax.plot(dneg['t'], dneg[colL], '--', color=C_L, lw=1.5, label=r'$L$, $k{<}0$')
-        ax.plot(dneg['t'], dneg[colR], '--', color=C_R, lw=1.5, label=r'$R$, $k{<}0$')
+        ax.plot(dpos['t'], dpos[colL], '-',  color=C_L, lw=1.0, label=r'$L$, $k{>}0$')
+        ax.plot(dpos['t'], dpos[colR], '-',  color=C_R, lw=1.0, label=r'$R$, $k{>}0$')
+        ax.plot(dneg['t'], dneg[colL], '--', color=C_L, lw=1.0, label=r'$L$, $k{<}0$')
+        ax.plot(dneg['t'], dneg[colR], '--', color=C_R, lw=1.0, label=r'$R$, $k{<}0$')
         if tmin is None:
             _milestones(ax)
         ax.set_xlim(dpos['t'].min(), dpos['t'].max())
@@ -144,9 +201,9 @@ def plot_deltas(dpos, dneg, outdir, stem, title=None, tmin=None):
         ax = axes[row_i]
         ax.axhline(0.0, color='0.6', lw=0.9, ls='-')
         ax.plot(dpos['t'], dpos[colR] - dpos[colL], '-',
-                color=C_KPOS, lw=1.5, label=r'$k{>}0$')
+                color=C_KPOS, lw=1.0, label=r'$k{>}0$')
         ax.plot(dneg['t'], dneg[colR] - dneg[colL], '--',
-                color=C_KNEG, lw=1.5, label=r'$k{<}0$')
+                color=C_KNEG, lw=1.0, label=r'$k{<}0$')
         if tmin is None:
             _milestones(ax)
         ax.set_xlim(dpos['t'].min(), dpos['t'].max())
@@ -184,18 +241,18 @@ FFT_LABELS = {
 }
 
 
-def plot_fourier(dpos, dneg, outdir, stem, title=None):
-    """FFT de las corrientes (L y R) para t>=T_ON_G1, kpos vs kneg."""
+def plot_fourier(dpos, dneg, outdir, stem, title=None, t_from=0.0):
+    """FFT de las corrientes (L y R) para t >= t_from, kpos vs kneg."""
     fig, axes = plt.subplots(len(ROWS), 1, figsize=(12, 10), sharex=True)
     if title:
         fig.suptitle(title)
     for row_i, (tag, colL, colR, ylab) in enumerate(ROWS):
         ax = axes[row_i]
         for d, ls, ktag in [(dpos, '-', r'$k{>}0$'), (dneg, '--', r'$k{<}0$')]:
-            wL, aL = _fft_amp(d['t'], d[colL], T_ON_G1)
-            wR, aR = _fft_amp(d['t'], d[colR], T_ON_G1)
-            ax.plot(wL / OMEGA, aL**2, ls, color=C_L, lw=1.3, label=fr'$L$, {ktag}')
-            ax.plot(wR / OMEGA, aR**2, ls, color=C_R, lw=1.3, label=fr'$R$, {ktag}')
+            wL, aL = _fft_amp(d['t'], d[colL], t_from)
+            wR, aR = _fft_amp(d['t'], d[colR], t_from)
+            ax.plot(wL / OMEGA, aL**2, ls, color=C_L, lw=1.0, label=fr'$L$, {ktag}')
+            ax.plot(wR / OMEGA, aR**2, ls, color=C_R, lw=1.0, label=fr'$R$, {ktag}')
         for h in range(1, 5):
             ax.axvline(h, color='k', lw=0.8, ls=':', alpha=0.35, zorder=0)
         ax.set_xlim(0.0, 4.5)
@@ -205,7 +262,7 @@ def plot_fourier(dpos, dneg, outdir, stem, title=None):
         if row_i == 0:
             ax.legend(frameon=True, edgecolor='black', framealpha=0.0, fancybox=False,
                        loc='best', borderpad=0.5, handlelength=2.0, labelspacing=0.3,
-                       ncol=2, fontsize=11)
+                       ncol=2, fontsize=14)
 
     plt.tight_layout()
     _save(fig, outdir, stem)
@@ -219,17 +276,43 @@ def main():
     ap.add_argument('--data-dir', default=None, help='override directo (ignora --run-tag)')
     ap.add_argument('--outdir', default=None, help='override directo (ignora --run-tag)')
     ap.add_argument('--r', type=float, nargs='*', default=list(R_VALUES))
+    ap.add_argument('--trace', default=None,
+                     help='CSV unico a graficar (p.ej. prep_trace.csv). Con esta '
+                          'opcion no hay comparacion kpos/kneg ni barrido en r.')
     args = ap.parse_args()
 
-    run_dir = rc.resolve_run_dir(args.run_tag)
+    prefix = 'steady_state_' if args.trace else 'pumping_'
+    run_dir = rc.resolve_run_dir(args.run_tag, prefix=prefix)
     data_dir = args.data_dir or run_dir
     outdir = args.outdir or run_dir
     os.makedirs(outdir, exist_ok=True)
 
     global T_ON_G3, T_ON_G1, OMEGA
-    T_ON_G3, T_ON_G1, OMEGA = rc.protocol_times(data_dir)
+    prot = rc.protocol(data_dir)
+    T_ON_G3, T_ON_G1, OMEGA = prot['t_on_g3'], prot['t_on_g1'], prot['Omega']
+    t_rise = prot['t_rise'] or 0.0
+
+    # La ventana de la FFT arranca despues de la rampa adiabatica de encendido:
+    # incluirla mete un transiente que no es parte de la respuesta periodica.
+    t_on = T_ON_G1 if T_ON_G1 is not None else T_ON_G3
+    t_from = (t_on or 0.0) + t_rise
+
     print(f'run_tag = {os.path.basename(run_dir)}\n'
-          f't_on_g3 = {T_ON_G3}   t_on_g1 = {T_ON_G1}   Omega = {OMEGA}')
+          f't_on_g3 = {T_ON_G3}   t_on_g1 = {T_ON_G1}   Omega = {OMEGA}\n'
+          f'ventana de zoom/FFT desde t = {t_from}')
+
+    if args.trace:
+        path = args.trace if os.path.isabs(args.trace) else os.path.join(data_dir, args.trace)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        odir = os.path.join(outdir, 'figs')
+        os.makedirs(odir, exist_ok=True)
+        df = load_csv(path, stem)
+        plot_single(df, odir, f'{stem}_currents')
+        plot_single(df, odir, f'{stem}_delta_I', delta=True)
+        plot_single(df, odir, f'{stem}_currents_zoom', tmin=t_from)
+        plot_single(df, odir, f'{stem}_delta_I_zoom', tmin=t_from, delta=True)
+        plot_single_fourier(df, odir, f'{stem}_fourier', t_from)
+        return
 
     for r in args.r:
         tag = r_tag(r)
@@ -241,9 +324,9 @@ def main():
 
         plot_currents(dpos, dneg, odir, 'currents', title)
         plot_deltas(dpos, dneg, odir, 'delta_I', title)
-        plot_currents(dpos, dneg, odir, 'currents_zoom', title, tmin=T_ON_G1)
-        plot_deltas(dpos, dneg, odir, 'delta_I_zoom', title, tmin=T_ON_G1)
-        plot_fourier(dpos, dneg, odir, 'fourier', title)
+        plot_currents(dpos, dneg, odir, 'currents_zoom', title, tmin=t_from)
+        plot_deltas(dpos, dneg, odir, 'delta_I_zoom', title, tmin=t_from)
+        plot_fourier(dpos, dneg, odir, 'fourier', title, t_from=t_from)
 
 
 if __name__ == '__main__':

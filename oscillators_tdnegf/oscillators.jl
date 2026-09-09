@@ -1,23 +1,27 @@
 #!/usr/bin/env julia
 #=
-  oscillators.jl  --  PREPARACION DEL STEADY STATE
+  oscillators.jl  --  DOS MODOS
 
-  Una sola trayectoria, sin barrido en r ni en k: g1 (la onda viajera) nunca se
-  enciende. El objetivo es llevar la cadena a su estado estacionario con el
-  driver g3 encendido, y guardar un CHECKPOINT COMPLETO del que despues
-  ramifican las corridas de pumping (pump_g1.jl).
+    prep    (por defecto)  arranca en frio, lleva la cadena a su estado
+                           estacionario con solo el driver g3 encendido, y
+                           guarda un CHECKPOINT COMPLETO al final.
 
-  Protocolo temporal:
-    t ∈ [0, t_relax)        relajacion con damping fuerte, todo apagado
-    t = t_on_g3 = t_relax    arranca g3 (precesion uniforme), damping debil
-    t ∈ [t_on_g3, t_final]   el sistema se asienta en su estado estacionario
-    t = t_final              se escribe el checkpoint
+    resume                 carga ese checkpoint y continua la dinamica desde
+                           t_ckpt encendiendo g1 (la onda viajera), una rama
+                           por cada (r, signo de k).
+
+  Uso:
+    julia --project=. oscillators_tdnegf/oscillators.jl
+    julia --project=. oscillators_tdnegf/oscillators.jl resume
+    julia --project=. oscillators_tdnegf/oscillators.jl resume r1p0_kpos r1p0_kneg
 
   El checkpoint guarda el vector de estado del integrador (ρ_ab + auxiliares de
-  los leads) y la configuracion de espines, que es lo unico con lo que se puede
-  reanudar exactamente la dinamica. Los observables por si solos NO alcanzan.
+  los leads) y la configuracion de espines. Los observables por si solos NO
+  alcanzan para reanudar: la memoria de los leads no se puede reconstruir.
 
-  Salidas en  output/steady_state_<param_tag>/
+  Salidas:
+    prep     output/steady_state_<param_tag>/
+    resume   output/pumping_<param_tag>/
 =#
 
 using Pkg
@@ -35,20 +39,16 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
-# Etiqueta de parametros fisicos, compartida con pump_g1.jl
-@inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
-param_tag() = "gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))"
-
 # Geometría
 const N_SPINS   = 26
-const Nx, Ny    = 2 * N_SPINS + 1, 1        # 53 sitios electrónicos
+const Nx, Ny    = 2 * N_SPINS + 1, 1        
 const Nσ, N_orb = 2, 1
 
-# sitio electrónico (1-based) del espín m: 2,4,...,52
+# sitio electrónico del espín m: 2,4,...,52
 @inline elec_site(m::Int) = 2 * m
 
 const GROUPS = (
-    g1 = 1:5,      # onda viajera,        APAGADA en la preparacion
+    g1 = 1:5,      # onda viajer
     g2 = 6:15,     # libre (LLG)
     g3 = 16:16,    # precesión uniforme,  arranca en t_on_g3
     g4 = 17:26,    # libre (LLG)
@@ -75,15 +75,43 @@ const kT            = 0.0
 # driving
 const θ_max   = deg2rad(10.0)
 const Ω       = 0.01
-const T_drive = 2π / Ω             # 628.32
-const t_rise  = 630.0              # ~1 periodo, encendido adiabatico de g3
+const T_drive = 2π / Ω             
+const t_rise  = 630.0              
 const t_relax = 5000.0             # relajacion de leads/electrones
 const t_on_g3 = 5000.0             # el driver arranca donde termina la relajacion
-const t_final = 12500.0            # + 7500 de driver ≈ 11.9 periodos
-const t_on_g1 = t_final            # g1 NUNCA se enciende en la preparacion
+const t_final = 12500.0            # fin de la preparacion 
+const t_pump  = 20000.0            # duracion del pump
 
-const OUT_RUN = joinpath(OUT, "steady_state_" * param_tag()); mkpath(OUT_RUN)
-const CKPT = joinpath(OUT_RUN, "checkpoint_t$(round(Int, t_final)).jld2")
+const R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
+
+# Etiqueta de parametros fisicos
+@inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
+param_tag() = "gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))"
+
+const OUT_PREP = joinpath(OUT, "steady_state_" * param_tag())
+const OUT_PUMP = joinpath(OUT, "pumping_" * param_tag())
+const CKPT     = joinpath(OUT_PREP, "checkpoint_t$(round(Int, t_final)).jld2")
+
+const RUNS = Tuple(
+    (name = "r$(replace(string(r), "." => "p"))_k$(s > 0 ? "pos" : "neg")",
+     k = s * r * Ω / γ_eff)
+    for r in R_VALUES for s in (+1, -1)
+)
+
+# Configuracion de una corrida 
+struct RunCfg
+    name::String
+    k::Float64
+    t_start::Float64
+    t_stop::Float64
+    t_on_g1::Float64      # = t_stop en prep (nunca prende); = t_start en resume
+    outdir::String
+    save_ckpt::Bool
+end
+
+is_prep(cfg) = cfg.name == "prep"
+trace_file(cfg)  = is_prep(cfg) ? "prep_trace.csv"   : "oscillators_trace_$(cfg.name).csv"
+fields_file(cfg) = is_prep(cfg) ? "prep_fields.jld2" : "oscillators_fields_$(cfg.name).jld2"
 
 # Driving cinemático: M(t)
 @inline smooth_switch(τ, ti) = τ < 0 ? 0.0 : (τ < ti ? sin((π / 2) * τ / ti)^2 : 1.0)
@@ -94,7 +122,7 @@ const CKPT = joinpath(OUT_RUN, "checkpoint_t$(round(Int, t_final)).jld2")
     return SVector{3,Float64}(sin(θ) * cos(φ), sin(θ) * sin(φ), cos(θ))
 end
 
-function force_driven!(sys, t::Float64, k::Float64)
+function force_driven!(sys, t::Float64, k::Float64, t_on_g1::Float64)
     for m in GROUPS.g3
         sys.dipoles[m, 1, 1, 1] = pumped_spin(t, 0.0, 0.0, t_on_g3)
     end
@@ -105,14 +133,16 @@ function force_driven!(sys, t::Float64, k::Float64)
 end
 
 # Sistema de espines (Sunny)
-function init_spins()
+function init_spins(dipoles0 = nothing)
     latvecs   = lattice_vectors(1.0, 1.0 * (1 + 1e-3), 4.0, 90, 90, 90)
     positions = [[0.5, 0.5, 0.0]]
     cryst     = Crystal(latvecs, positions)
     moments   = [1 => Moment(s = 1.0, g = 1.0)]
     sys = System(cryst, moments, :dipole; dims = (N_SPINS, 1, 1))
     for m in 1:N_SPINS
-        sys.dipoles[m, 1, 1, 1] = Sunny.SVector(0.0, 0.0, 1.0)
+        v = dipoles0 === nothing ? Sunny.SVector(0.0, 0.0, 1.0) :
+            Sunny.SVector(dipoles0[1, m], dipoles0[2, m], dipoles0[3, m])
+        sys.dipoles[m, 1, 1, 1] = v
     end
     return sys
 end
@@ -137,17 +167,17 @@ function update_H_s_free!(sys, σx_i_now)
     return nothing
 end
 
-# Metadatos compartidos por todas las salidas
-prep_params() = (γ = γ, γso = γso, γ_eff = γ_eff, j_sd = j_sd, θmax = θ_max, Ω = Ω,
-                 E_F = E_F, β = β, N_λ1 = N_λ1, N_λ2 = N_λ2, Δt = Δt,
-                 t_on_g3 = t_on_g3, t_on_g1 = t_on_g1, t_rise = t_rise,
-                 t_relax = t_relax, t_final = t_final,
-                 damping_relax = damping_relax, damping_dyn = damping_dyn, kT = kT)
-
+# Metadatos
 geometry() = (N_SPINS = N_SPINS, Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb)
 
-# Checkpoint: lo unico con lo que pump_g1.jl puede reanudar la dinamica
-function save_checkpoint(intg, sys)
+run_params(cfg) = (γ = γ, γso = γso, γ_eff = γ_eff, j_sd = j_sd, θmax = θ_max, Ω = Ω,
+                   k = cfg.k, E_F = E_F, β = β, N_λ1 = N_λ1, N_λ2 = N_λ2, Δt = Δt,
+                   t_on_g3 = t_on_g3, t_on_g1 = cfg.t_on_g1, t_rise = t_rise,
+                   t_relax = t_relax, t_start = cfg.t_start, t_stop = cfg.t_stop,
+                   damping_relax = damping_relax, damping_dyn = damping_dyn, kT = kT)
+
+# Checkpoint
+function save_checkpoint(cfg, intg, sys)
     S_final = Array{Float64}(undef, 3, N_SPINS)
     for m in 1:N_SPINS, c in 1:3
         S_final[c, m] = sys.dipoles[m, 1, 1, 1][c]
@@ -155,7 +185,7 @@ function save_checkpoint(intg, sys)
     jldsave(CKPT;
             u = collect(intg.u), t = intg.t, dipoles = S_final,
             len_u = length(intg.u),
-            geometry = geometry(), params = prep_params(),
+            geometry = geometry(), params = run_params(cfg),
             groups = (g1 = collect(GROUPS.g1), g2 = collect(GROUPS.g2),
                       g3 = collect(GROUPS.g3), g4 = collect(GROUPS.g4)))
     @printf("Checkpoint escrito: %s  (t=%.1f, |u|=%d, %.2f MB)\n",
@@ -163,12 +193,35 @@ function save_checkpoint(intg, sys)
     return nothing
 end
 
-# Observables de la preparacion
-function save_outputs(obs, S_hist)
+function load_checkpoint()
+    isfile(CKPT) || error("No existe el checkpoint:\n  $CKPT\nCorre primero el modo prep.")
+    ck = jldopen(CKPT, "r") do f
+        (u = f["u"], t = f["t"], dipoles = f["dipoles"],
+         len_u = f["len_u"], geometry = f["geometry"], params = f["params"])
+    end
+
+    # Validacion: cargar un checkpoint de otra configuracion daria basura silenciosa
+    g, p = ck.geometry, ck.params
+    for (nom, esperado, guardado) in (("N_SPINS", N_SPINS, g.N_SPINS), ("Nx", Nx, g.Nx),
+                                      ("Ny", Ny, g.Ny), ("Nσ", Nσ, g.Nσ),
+                                      ("N_orb", N_orb, g.N_orb),
+                                      ("γso", γso, p.γso), ("j_sd", j_sd, p.j_sd),
+                                      ("Ω", Ω, p.Ω), ("β", β, p.β),
+                                      ("N_λ1", N_λ1, p.N_λ1), ("N_λ2", N_λ2, p.N_λ2))
+        esperado == guardado || error("El checkpoint no coincide con este script: " *
+                                      "$nom = $guardado en el checkpoint, $esperado aqui.")
+    end
+    @printf("Checkpoint cargado: t=%.1f  |u|=%d  (%s)\n",
+            ck.t, ck.len_u, basename(CKPT))
+    return ck
+end
+
+# Observables
+function save_outputs(cfg, obs, S_hist)
     t  = obs.t
     Nt = length(t)
 
-    jldsave(joinpath(OUT_RUN, "prep_fields.jld2");
+    jldsave(joinpath(cfg.outdir, fields_file(cfg));
             t = t, s_i = S_hist,
             sigma_i = obs.σx_i, sigma_eq = obs.σx_i_eq, n_i = obs.n_i,
             I_alpha = obs.Iα, I_alpha_x = obs.Iαx,
@@ -176,7 +229,7 @@ function save_outputs(obs, S_hist)
                       g3 = collect(GROUPS.g3), g4 = collect(GROUPS.g4)),
             driven = DRIVEN, free = FREE,
             elec_sites = [elec_site(m) for m in 1:N_SPINS],
-            geometry = geometry(), params = prep_params())
+            geometry = geometry(), params = run_params(cfg))
 
     header = ["t", "I_L", "I_R", "Isx_L", "Isy_L", "Isz_L", "Isx_R", "Isy_R", "Isz_R"]
     for m in 1:N_SPINS
@@ -202,20 +255,32 @@ function save_outputs(obs, S_hist)
             data[i, col] = S_hist[3, m, i]; col += 1
         end
     end
-    writedlm(joinpath(OUT_RUN, "prep_trace.csv"), vcat(permutedims(header), data), ",")
-    println("Observables: prep_fields.jld2  prep_trace.csv")
+    writedlm(joinpath(cfg.outdir, trace_file(cfg)), vcat(permutedims(header), data), ",")
+    @printf("  [%s] -> %s  %s\n", cfg.name, fields_file(cfg), trace_file(cfg))
     return nothing
 end
 
-function write_params_label()
-    open(joinpath(OUT_RUN, "params.txt"), "w") do io
-        println(io, "PREPARACION DEL STEADY STATE  (g1 apagado)")
+function write_params_label(outdir, modo, sel; t_on_g1 = nothing)
+    open(joinpath(outdir, "params.txt"), "w") do io
+        println(io, modo == :prep ? "PREPARACION DEL STEADY STATE  (g1 apagado)" :
+                                    "PUMPING: ramas con g1 encendido")
         println(io, "param_tag = ", param_tag())
-        println(io, "checkpoint = ", basename(CKPT))
+        if modo == :prep
+            println(io, "checkpoint = ", basename(CKPT))
+        else
+            println(io, "checkpoint de origen = ", CKPT)
+            # t_on_g1 lo leen los scripts de python para las lineas de hito y la
+            # ventana de la FFT; en prep no se escribe porque g1 nunca se enciende.
+            println(io, "t_on_g1 = ", t_on_g1)
+            println(io, "t_pump = ", t_pump, "   (", round(t_pump/T_drive, digits = 2), " periodos)")
+            println(io, "corridas = ", join((c.name for c in sel), ", "))
+            println(io, "R_VALUES = ", R_VALUES)
+        end
         println(io, "")
         println(io, "N_SPINS = ", N_SPINS, "   Nx = ", Nx, "   Ny = ", Ny,
                     "   Nσ = ", Nσ, "   N_orb = ", N_orb)
-        println(io, "g1 = ", GROUPS.g1, "  (onda viajera, APAGADA aqui)")
+        println(io, "g1 = ", GROUPS.g1, modo == :prep ? "  (onda viajera, APAGADA)" :
+                                                        "  (onda viajera, ENCENDIDA)")
         println(io, "g2 = ", GROUPS.g2, "  (libre)")
         println(io, "g3 = ", GROUPS.g3, "  (driver, precesion uniforme)")
         println(io, "g4 = ", GROUPS.g4, "  (libre)")
@@ -240,20 +305,23 @@ function write_params_label()
         println(io, "t_relax = ", t_relax)
         println(io, "t_on_g3 = ", t_on_g3)
         println(io, "t_rise  = ", t_rise)
-        println(io, "t_final = ", t_final,
-                    "   (", round((t_final - t_on_g3)/T_drive, digits = 2), " periodos de driver)")
+        println(io, "t_final = ", t_final)
     end
-    println("params.txt escrito")
+    println("params.txt escrito en ", outdir)
     return nothing
 end
 
-function run_prep()
+# Nucleo compartido por los dos modos
+function run_case(cfg::RunCfg, Rλ, zλ, u0_init, dipoles0)
+    @printf("[%s]  t: %.0f -> %.0f   k=%+.5f   t_on_g1=%.0f\n",
+            cfg.name, cfg.t_start, cfg.t_stop, cfg.k, cfg.t_on_g1)
+    flush(stdout)
+
     p_model = ModelParamsTDNEGF(Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb,
                                  Nα = 2, N_λ1 = N_λ1, N_λ2 = N_λ2)
     H0 = build_H_ab(; Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb,
                      γ = γ, γso = complex(γso, 0.0))
 
-    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
     Σᴸ = build_Σᴸ_nλ(Rλ, zλ, Ny, Nσ, N_orb, N_λ1, N_λ2; β = β, γ = γ, μ = E_F)
     Σᴳ = build_Σᴳ_nλ(Rλ, zλ, Ny, Nσ, N_orb, N_λ1, N_λ2; β = β, γ = γ, μ = E_F)
     χ  = build_χ_nλ(zλ,      Ny, Nσ, N_orb, N_λ1, N_λ2; β = β, γ = γ, μ = E_F)
@@ -268,20 +336,29 @@ function run_prep()
     p_model.H_ab  .= H0
     p_blocks = ExperimentalBlockRHSParams(p_model.H_ab, blocks, ComplexF64[0.0, 0.0], p_model)
 
-    u0 = zeros(ComplexF64, p_blocks.dims_ρ_ab[1]^2 + p_blocks.aux_layout.total_size)
-    @printf("Vector de estado: |u| = %d  (%.2f MB por checkpoint)\n",
-            length(u0), 16 * length(u0) / 1e6)
+    len_u = p_blocks.dims_ρ_ab[1]^2 + p_blocks.aux_layout.total_size
+    u0 = if u0_init === nothing
+        zeros(ComplexF64, len_u)
+    else
+        length(u0_init) == len_u ||
+            error("El checkpoint tiene |u|=$(length(u0_init)) y aqui se esperan $len_u.")
+        copy(u0_init)                     # cada rama necesita su propia copia
+    end
 
-    sys = init_spins()
+    sys = init_spins(dipoles0)
     site_ranges = [get_sub(i, p_model.N_loc) for i in 1:p_model.N_sites]
 
-    prob = ODEProblem(eom_tdnegf_blocks!, u0, (0.0, t_final), p_blocks)
+    # Al reanudar, H_ab debe corresponder a los espines del checkpoint desde el
+    # primer paso; si no, la primera evaluacion del RHS usaria H sin acoplar.
+    dipoles0 === nothing || update_H_e!(p_model, site_ranges, full_dipoles(sys), j_sd)
+
+    prob = ODEProblem(eom_tdnegf_blocks!, u0, (cfg.t_start, cfg.t_stop), p_blocks)
     intg = init(prob, Vern7(); dt = Δt, save_everystep = false, adaptive = true, dense = false)
 
     llg_relax = Langevin(Δt; damping = damping_relax, kT = kT)
     llg_dyn   = Langevin(Δt; damping = damping_dyn,   kT = kT)
 
-    N_steps = Int(round(t_final / Δt))
+    N_steps = Int(round((cfg.t_stop - cfg.t_start) / Δt))
     obs = ObservablesTDNEGF(p_model; N_tmax = N_steps, N_leads = 2)
     S_hist = Array{Float64}(undef, 3, N_SPINS, N_steps)
 
@@ -292,7 +369,7 @@ function run_prep()
 
         DifferentialEquations.step!(intg, Δt, true)
         Sunny.step!(sys, llg)
-        force_driven!(sys, intg.t, 0.0)          # k irrelevante: g1 apagado
+        force_driven!(sys, intg.t, cfg.k, cfg.t_on_g1)
 
         dv = pointer_blocks(intg.u, p_blocks.dims_ρ_ab, p_blocks.aux_layout)
         ρ  = ρ_eq(E_F, β, p_model.H_ab, N_λ2, Nx, Ny, Nσ, N_orb)
@@ -311,25 +388,25 @@ function run_prep()
         update_H_e!(p_model, site_ranges, full_dipoles(sys), j_sd)
 
         if i % 1000 == 0
-            etapa = intg.t < t_on_g3 ? "relajacion" : "driver g3"
-            @printf("  t=%7.1f/%.0f  [%s]  I_L=% .3e  I_R=% .3e  elapsed=%.0fs\n",
-                    intg.t, t_final, etapa, 0.5 * obs.Iα[1, i], -0.5 * obs.Iα[2, i],
-                    time() - started)
+            etapa = intg.t < t_on_g3 ? "relajacion" :
+                    (intg.t < cfg.t_on_g1 ? "driver g3" : "g1+g3")
+            @printf("  [%s] t=%7.1f/%.0f  [%s]  I_L=% .3e  I_R=% .3e  elapsed=%.0fs\n",
+                    cfg.name, intg.t, cfg.t_stop, etapa,
+                    0.5 * obs.Iα[1, i], -0.5 * obs.Iα[2, i], time() - started)
             flush(stdout)
         end
     end
-    @printf("\nDinamica lista en %.1f s\n", time() - started)
+    @printf("[%s] dinamica lista en %.1f s\n", cfg.name, time() - started)
 
-    save_checkpoint(intg, sys)
-    save_outputs(obs, S_hist)
+    cfg.save_ckpt && save_checkpoint(cfg, intg, sys)
+    save_outputs(cfg, obs, S_hist)
     return nothing
 end
 
-function main()
-    BLAS.set_num_threads(Sys.CPU_THREADS)
-
+function run_prep()
+    mkpath(OUT_PREP)
     println("="^70)
-    println("PREPARACION DEL STEADY STATE   (g1 apagado, solo driver g3)")
+    println("MODO prep -- PREPARACION DEL STEADY STATE  (g1 apagado)")
     println("="^70)
     @printf("Cadena Rashba: Nx=%d (=2·%d+1)  γ=%.4f  γso=%.4f  γ_eff=%.4f\n",
             Nx, N_SPINS, γ, γso, γ_eff)
@@ -339,14 +416,71 @@ function main()
             GROUPS.g1, GROUPS.g2, GROUPS.g3, GROUPS.g4)
     @printf("t_relax=%.0f  t_on_g3=%.0f  t_rise=%.0f  t_final=%.0f  (%.1f periodos de driver)\n",
             t_relax, t_on_g3, t_rise, t_final, (t_final - t_on_g3) / T_drive)
-    @printf("Salidas en %s\n", OUT_RUN)
+    @printf("Salidas en %s\n", OUT_PREP)
     println("="^70)
     flush(stdout)
 
-    write_params_label()
-    run_prep()
+    BLAS.set_num_threads(Sys.CPU_THREADS)
+    write_params_label(OUT_PREP, :prep, ())
 
-    @printf("\nListo. Checkpoint para pump_g1.jl:\n  %s\n", CKPT)
+    # t_on_g1 = t_stop garantiza por construccion que g1 nunca se enciende
+    cfg = RunCfg("prep", 0.0, 0.0, t_final, t_final, OUT_PREP, true)
+    run_case(cfg, load_poles_square(N_λ1, N_λ2)..., nothing, nothing)
+
+    @printf("\nListo. Checkpoint para el modo resume:\n  %s\n", CKPT)
+    return nothing
+end
+
+function run_resume(names)
+    sel = isempty(names) ? RUNS : filter(c -> c.name in names, RUNS)
+    isempty(sel) && error("Ninguna corrida coincide con $(names). Opciones: " *
+                          join((c.name for c in RUNS), ", "))
+    mkpath(OUT_PUMP)
+
+    ck = load_checkpoint()
+    t0 = ck.t
+
+    println("="^70)
+    println("MODO resume -- PUMPING desde el steady state (g1 encendido)")
+    println("="^70)
+    @printf("Checkpoint: t=%.1f   ->   ramas hasta t=%.1f  (%.1f periodos)\n",
+            t0, t0 + t_pump, t_pump / T_drive)
+    @printf("Corridas (%d): %s\n", length(sel), join((c.name for c in sel), ", "))
+    @printf("Hilos de Julia: %d\n", Threads.nthreads())
+    Threads.nthreads() < length(sel) &&
+        @printf("AVISO: %d corridas y solo %d hilos. Relanza con --threads=%d\n",
+                length(sel), Threads.nthreads(), length(sel))
+    @printf("Salidas en %s\n", OUT_PUMP)
+    println("="^70)
+    flush(stdout)
+
+    BLAS.set_num_threads(max(1, Sys.CPU_THREADS ÷ length(sel)))
+    write_params_label(OUT_PUMP, :resume, sel; t_on_g1 = t0)
+
+    Rλ, zλ = load_poles_square(N_λ1, N_λ2)
+
+    started = time()
+    Threads.@threads for i in eachindex(sel)
+        c = sel[i]
+        # g1 arranca justo en el checkpoint: el eje temporal continua sin salto,
+        # asi la fase de precesion de g3 empalma con la preparacion.
+        cfg = RunCfg(c.name, c.k, t0, t0 + t_pump, t0, OUT_PUMP, false)
+        run_case(cfg, Rλ, zλ, ck.u, ck.dipoles)
+    end
+    @printf("\nListo en %.1f s. Salidas en %s\n", time() - started, OUT_PUMP)
+    return nothing
+end
+
+function main()
+    modo = isempty(ARGS) ? "prep" : lowercase(ARGS[1])
+    if modo == "prep"
+        length(ARGS) > 1 && error("El modo prep no acepta argumentos extra: $(ARGS[2:end])")
+        run_prep()
+    elseif modo == "resume"
+        run_resume(ARGS[2:end])
+    else
+        error("Modo desconocido: '$(ARGS[1])'. Usa 'prep' (por defecto) o 'resume [nombres...]'.")
+    end
 end
 
 main()
