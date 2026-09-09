@@ -70,27 +70,28 @@ def main():
     i0 = max(1, int(0.8 * len(df)))
     plateau = float(np.mean(df['I_R_2egh'].to_numpy()[i0:]))
 
-    fig, ax = plt.subplots(figsize=(9.0, 6.0))
+    fig, ax = plt.subplots(figsize=(5.5, 4.5))
 
     ax.plot(t, I, '-', color='red', lw=1.5, zorder=3)
     ax.axhline(plateau, color='0.5', ls='--', lw=1.0, zorder=2)
 
     # Flecha apuntando al plateau
-    x_arrow = t[-1] * 0.62
-    y_text = plateau * 0.5
+    x_arrow = t[-1] * 0.95
+    y_text = plateau * 0.7
     label = (r'$I_R(t\!\to\!\infty)/V_b = ' + str(args.channels) + r'e^2/h$')
     ax.annotate(label,
                 xy=(x_arrow, plateau),
-                xytext=(x_arrow, y_text),
+                xytext=(x_arrow*0.65, y_text*0.95),
                 ha='center', va='top', fontsize=20,
                 arrowprops=dict(arrowstyle='->', lw=1.5, color='black',
                                 shrinkA=0, shrinkB=2))
 
+    ax.text(0.05, 0.125, r'$eV_b = 0.01\,\gamma$', transform=ax.transAxes, ha='left', va='top', fontsize=20)
+
     ax.set_xlabel(r'Time (fs)')
     ax.set_ylabel(r'$I_R\ (2e\gamma/h)$')
     ax.set_xlim(t.min(), t.max())
-    ax.set_ylim(0.0, plateau * 1.25)
-    ax.minorticks_on()
+    ax.set_ylim(0.0, plateau * 1.35)
     _fmt_axes(ax)
 
     plt.tight_layout()

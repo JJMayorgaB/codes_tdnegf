@@ -1,25 +1,4 @@
 #!/usr/bin/env julia
-#=
-  ballistic_transient.jl
-
-  Corriente transitoria I_R(t) de un alambre balistico (sin SOC) tras encender
-  un bias δV en t=0, hasta alcanzar el plateau de Landauer.
-
-  Geometria: Nx x Ny, leads acoplados a las columnas 1 y Nx con γc = γ
-  (acople perfecto -> sin reflexion en las interfaces). Con Ny=2 los modos
-  transversales son ε = ∓γ, y cada uno abre una subbanda E_m(k) = ε_m - 2γcos k,
-  o sea [-3γ, +γ] y [-γ, +3γ]. En E_F = 0 ambas estan abiertas, y con Nσ = 2
-  quedan 4 canales -> T = 4 -> I_R(t→∞)/V_b = 4 e²/h.
-
-  A diferencia de conductance_verification.jl (Nx=1, donde ξ_L = ξ_R produce un
-  factor geometrico x2), aca Nx > 1 y no hay factor espurio. El script igual
-  compara el plateau medido contra T(E_F) exacto de Landauer.
-
-  Unidades (el codigo usa ħ = e = 1 y energias en unidades de γ):
-    tiempo    t[fs]           = t_sim · ħ/γ = t_sim · 0.6582   (tomando γ = 1 eV)
-    corriente I[2eγ/h]        = π · I_sim
-      (porque I_fisica = I_sim·eγ/ħ, y (eγ/ħ)/(2eγ/h) = h/2ħ = π)
-=#
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
