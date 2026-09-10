@@ -307,11 +307,12 @@ def main():
         odir = os.path.join(outdir, 'figs')
         os.makedirs(odir, exist_ok=True)
         df = load_csv(path, stem)
-        plot_single(df, odir, f'{stem}_currents')
-        plot_single(df, odir, f'{stem}_delta_I', delta=True)
-        plot_single(df, odir, f'{stem}_currents_zoom', tmin=t_from)
-        plot_single(df, odir, f'{stem}_delta_I_zoom', tmin=t_from, delta=True)
-        plot_single_fourier(df, odir, f'{stem}_fourier', t_from)
+        titulo = r'Steady state preparation ($g_3$ driver only, $g_1$ off)'
+        plot_single(df, odir, f'{stem}_currents', titulo)
+        plot_single(df, odir, f'{stem}_delta_I', titulo, delta=True)
+        plot_single(df, odir, f'{stem}_currents_zoom', titulo, tmin=t_from)
+        plot_single(df, odir, f'{stem}_delta_I_zoom', titulo, tmin=t_from, delta=True)
+        plot_single_fourier(df, odir, f'{stem}_fourier', t_from, titulo)
         return
 
     for r in args.r:

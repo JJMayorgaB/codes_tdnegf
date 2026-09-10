@@ -205,11 +205,12 @@ def main():
     df = load_trace(csv)
     stem = os.path.splitext(os.path.basename(csv))[0]
 
-    plot_currents(df, outdir, f'{stem}_currents')
-    plot_deltas(df, outdir, f'{stem}_delta_I')
-    plot_currents(df, outdir, f'{stem}_currents_zoom', tmin=t_from)
-    plot_deltas(df, outdir, f'{stem}_delta_I_zoom', tmin=t_from)
-    plot_fourier(df, outdir, f'{stem}_fourier', t_from)
+    titulo = r'Steady state preparation ($g_3$ driver only)'
+    plot_currents(df, outdir, f'{stem}_currents', titulo)
+    plot_deltas(df, outdir, f'{stem}_delta_I', titulo)
+    plot_currents(df, outdir, f'{stem}_currents_zoom', titulo, tmin=t_from)
+    plot_deltas(df, outdir, f'{stem}_delta_I_zoom', titulo, tmin=t_from)
+    plot_fourier(df, outdir, f'{stem}_fourier', t_from, titulo)
 
 
 if __name__ == '__main__':
