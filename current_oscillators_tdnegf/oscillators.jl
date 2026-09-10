@@ -1,28 +1,4 @@
 #!/usr/bin/env julia
-#=
-  oscillators.jl  --  PREPARACION DEL STEADY STATE  (variante SIN g1)
-
-  Igual que oscillators_tdnegf/oscillators.jl pero sin los 5 espines de la onda
-  viajera. Aqui la cadena es simetrica alrededor del driver:
-
-      g2 (10 libres)  |  g3 (driver)  |  g4 (10 libres)
-
-  La excitacion ya no va a venir de una onda cinematica impuesta sobre espines
-  clasicos, sino de INYECTAR UNA CORRIENTE POLARIZADA por los leads via TDNEGF.
-  Por eso g1 desaparece por completo: no hay t_on_g1, ni k, ni barrido en r.
-
-  Este script solo prepara el estado estacionario con el driver g3 encendido y
-  guarda un CHECKPOINT COMPLETO (ρ_ab + auxiliares de los leads + espines), que
-  es lo unico con lo que se puede reanudar exactamente la dinamica despues.
-
-  Protocolo temporal:
-    t ∈ [0, t_relax)        relajacion con damping fuerte, driver apagado
-    t = t_on_g3 = t_relax    arranca g3 (precesion uniforme), damping debil
-    t ∈ [t_on_g3, t_final]   el sistema se asienta
-    t = t_final              se escribe el checkpoint
-
-  Salidas en  output/steady_state_<param_tag>/
-=#
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -47,9 +23,6 @@ const Nσ, N_orb = 2, 1
 # sitio electrónico (1-based) del espín m: 2,4,...,42
 @inline elec_site(m::Int) = 2 * m
 
-# Sin g1: la cadena queda simetrica alrededor del driver (10 | 1 | 10).
-# Se conservan los nombres g2/g3/g4 para que la correspondencia con el proyecto
-# de oscillators_tdnegf sea directa (el driver sigue siendo g3 en ambos).
 const GROUPS = (
     g2 = 1:10,     # libre (LLG)
     g3 = 11:11,    # precesión uniforme, arranca en t_on_g3
@@ -71,21 +44,18 @@ const j_sd = 0.5
 const Δt = 0.1
 
 const damping_relax = 1.0
-const damping_dyn   = 0.05
+const damping_dyn   = 0.1
 const kT            = 0.0
 
 # driving
 const θ_max   = deg2rad(10.0)
 const Ω       = 0.01
-const T_drive = 2π / Ω             # 628.32
-const t_rise  = 630.0              # ~1 periodo, encendido adiabatico de g3
-const t_relax = 10000.0             # relajacion de leads/electrones
-const t_on_g3 = 10000.0             # el driver arranca donde termina la relajacion
-const t_final = 20000.0            # + 7500 de driver ≈ 11.9 periodos
+const T_drive = 2π / Ω             
+const t_rise  = 630.0              
+const t_relax = 10000.0            
+const t_on_g3 = 10000.0             
+const t_final = 25000.0           
 
-# Etiqueta de parametros. Lleva el numero de espines porque esta variante y la
-# de oscillators_tdnegf comparten los mismos parametros fisicos y solo difieren
-# en la geometria: sin el n<N_SPINS> las etiquetas serian identicas.
 @inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
 param_tag() = "n$(N_SPINS)_gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))"
 
