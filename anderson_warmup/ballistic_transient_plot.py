@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Figura I_R(t) del alambre balistico, con el plateau de Landauer anotado.
-
-Lee ballistic_transient.csv (generado por ballistic_transient.jl) y produce la
-figura con los ejes en unidades fisicas: tiempo en fs, corriente en 2e*gamma/h.
-"""
 
 import argparse
 import os
@@ -76,9 +71,9 @@ def main():
     ax.axhline(plateau, color='0.5', ls='--', lw=1.0, zorder=2)
 
     # Flecha apuntando al plateau
-    x_arrow = t[-1] * 0.95
-    y_text = plateau * 0.7
-    label = (r'$I_R(t\!\to\!\infty)/V_b = ' + str(args.channels) + r'e^2/h$')
+    x_arrow = 80 * 0.9
+    y_text = plateau * 1.4
+    label = (r'$I_{\text{R}}(t\!\to\!\infty)/V_b = ' + str(args.channels) + r'e^2/h$')
     ax.annotate(label,
                 xy=(x_arrow, plateau),
                 xytext=(x_arrow*0.65, y_text*0.95),
@@ -89,9 +84,18 @@ def main():
     ax.text(0.05, 0.125, r'$eV_b = 0.01\,\gamma$', transform=ax.transAxes, ha='left', va='top', fontsize=20)
 
     ax.set_xlabel(r'Time (fs)')
-    ax.set_ylabel(r'$I_R\ (2e\gamma/h)$')
-    ax.set_xlim(t.min(), t.max())
-    ax.set_ylim(0.0, plateau * 1.35)
+    ax.set_ylabel(r'$I_{\text{R}}\ (2e\gamma/h)$')
+    ax.set_xlim(t.min(), 80)
+    ax.set_ylim(0.0, 0.03)
+
+    # ticks en 0,1,2,3 con factor de escala x10^-2 aparte
+    ax.set_yticks(np.arange(0, 0.031, 0.01))
+    ax.set_yticklabels([f'{y:.0f}' for y in range(4)])
+    ax.text(-0.16, 1.03, r'$\times 10^{-2}$', transform=ax.transAxes,
+            ha='left', va='bottom', fontsize=17)
+
+    ax.set_xticks(np.arange(0, 81, 20))
+    ax.set_xticklabels([f'{x:.0f}' for x in np.arange(0, 81, 20)])
     _fmt_axes(ax)
 
     plt.tight_layout()
