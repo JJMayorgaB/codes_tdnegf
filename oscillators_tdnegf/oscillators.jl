@@ -77,9 +77,9 @@ const θ_max   = deg2rad(10.0)
 const Ω       = 0.01
 const T_drive = 2π / Ω             
 const t_rise  = 630.0              
-const t_relax = 5000.0             # relajacion de leads/electrones
-const t_on_g3 = 5000.0             # el driver arranca donde termina la relajacion
-const t_final = 12500.0            # fin de la preparacion 
+const t_relax = 10000.0             # relajacion de leads/electrones
+const t_on_g3 = 10000.0             # el driver arranca donde termina la relajacion
+const t_final = 20000.0            # fin de la preparacion 
 const t_pump  = 20000.0            # duracion del pump
 
 const R_VALUES = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0)
