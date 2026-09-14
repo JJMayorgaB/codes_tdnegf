@@ -39,6 +39,12 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
+# Presupuesto de hilos de BLAS para ESTE proceso. Sin la variable de entorno se
+# toman todos los cores, que es lo correcto en una maquina dedicada; en un
+# cluster compartido hay que acotarlo para no acaparar:
+#   OPENBLAS_NUM_THREADS=32 julia --project=. ...
+const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREADS)))
+
 # Geometría
 const N_SPINS   = 26
 const Nx, Ny    = 2 * N_SPINS + 1, 1        
@@ -457,7 +463,7 @@ function run_prep()
     println("="^70)
     flush(stdout)
 
-    BLAS.set_num_threads(Sys.CPU_THREADS)
+    BLAS.set_num_threads(N_BLAS)
     write_params_label(OUT_PREP, :prep, ())
 
     # t_on_g1 = t_stop garantiza por construccion que g1 nunca se enciende
@@ -491,7 +497,7 @@ function run_resume(names)
     println("="^70)
     flush(stdout)
 
-    BLAS.set_num_threads(max(1, Sys.CPU_THREADS ÷ length(sel)))
+    BLAS.set_num_threads(max(1, N_BLAS ÷ length(sel)))
     write_params_label(OUT_PUMP, :resume, sel; t_on_g1 = t0)
 
     Rλ, zλ = load_poles_square(N_λ1, N_λ2)

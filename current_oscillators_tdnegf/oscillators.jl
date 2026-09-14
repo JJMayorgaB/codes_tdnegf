@@ -15,6 +15,12 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
+# Presupuesto de hilos de BLAS para ESTE proceso. Sin la variable de entorno se
+# toman todos los cores, que es lo correcto en una maquina dedicada; en un
+# cluster compartido hay que acotarlo para no acaparar:
+#   OPENBLAS_NUM_THREADS=32 julia --project=. ...
+const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREADS)))
+
 # Geometría
 const N_SPINS   = 21
 const Nx, Ny    = 2 * N_SPINS + 1, 1        # 43 sitios electrónicos
@@ -334,7 +340,7 @@ function run_prep()
 end
 
 function main()
-    BLAS.set_num_threads(Sys.CPU_THREADS)
+    BLAS.set_num_threads(N_BLAS)
 
     println("="^70)
     println("PREPARACION DEL STEADY STATE   (sin g1: 10 libres | driver | 10 libres)")
