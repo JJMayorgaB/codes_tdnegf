@@ -51,8 +51,9 @@ const kT            = 0.0
 const θ_max   = deg2rad(10.0)
 const Ω       = 0.01
 const T_drive = 2π / Ω             
-const t_rise  = 630.0              
-const t_relax = 10000.0            
+const t_rise  = 630.0
+const t_leads = 630.0               # encendido suave del acople a los leads, desde t=0
+const t_relax = 10000.0
 const t_on_g3 = 10000.0             
 const t_final = 25000.0           
 
@@ -75,6 +76,28 @@ function force_driven!(sys, t::Float64)
     for m in GROUPS.g3
         sys.dipoles[m, 1, 1, 1] = pumped_spin(t, t_on_g3)
     end
+    return nothing
+end
+
+# Encendido suave del acople a los leads
+#
+#   ξ_α(t) = f(t) · ξ_α,   f: 0 -> 1 en t_leads (misma rampa sin² del driver)
+#
+# La hibridacion entra como Γ_α ∝ ξ_α², asi que Γ crece como f². Conectar los
+# leads de golpe en t=0 proyecta el estado inicial sobre todos los niveles del
+# dispositivo a la vez; los que estan debilmente acoplados quedan resonando sin
+# poder disipar al continuo. Con la rampa el acople crece despacio frente a la
+# escala de nivel del dispositivo y esas resonancias no se excitan.
+#
+# La EOM sigue siendo exacta con ξ dependiente del tiempo: en esta jerarquia ξ
+# solo aparece a tiempos iguales -- el termino de borde t̄=t que alimenta a Ψ y
+# Ω, y el factor externo de Π = Ψ ξᵀ. La memoria la cargan Ψ y Ω, no ξ, asi que
+# no aparecen terminos ∂_t ξ.
+@inline lead_switch(t::Float64) = smooth_switch(t, t_leads)
+
+function set_lead_coupling!(blocks, ξ_L0, ξ_R0, f::Float64)
+    blocks[1].ξ_an .= f .* ξ_L0
+    blocks[2].ξ_an .= f .* ξ_R0
     return nothing
 end
 
@@ -114,7 +137,7 @@ end
 # Metadatos compartidos por todas las salidas
 prep_params() = (γ = γ, γso = γso, γ_eff = γ_eff, j_sd = j_sd, θmax = θ_max, Ω = Ω,
                  E_F = E_F, β = β, N_λ1 = N_λ1, N_λ2 = N_λ2, Δt = Δt,
-                 t_on_g3 = t_on_g3, t_rise = t_rise,
+                 t_on_g3 = t_on_g3, t_rise = t_rise, t_leads = t_leads,
                  t_relax = t_relax, t_final = t_final,
                  damping_relax = damping_relax, damping_dyn = damping_dyn, kT = kT)
 
@@ -210,6 +233,7 @@ function write_params_label()
         println(io, "damping_dyn   = ", damping_dyn)
         println(io, "kT            = ", kT)
         println(io, "")
+        println(io, "t_leads = ", t_leads, "   (encendido suave de los leads, desde t=0)")
         println(io, "t_relax = ", t_relax)
         println(io, "t_on_g3 = ", t_on_g3)
         println(io, "t_rise  = ", t_rise)
@@ -236,6 +260,13 @@ function run_prep()
 
     blocks = [SelfEnergyBlock(:left,  p_model.Nc, N_λ1, N_λ2, Σᴸ, Σᴳ, χ, ξ_L),
               SelfEnergyBlock(:right, p_model.Nc, N_λ1, N_λ2, Σᴸ, Σᴳ, χ, ξ_R)]
+
+    # SelfEnergyBlock guarda la referencia al arreglo, no una copia
+    # (blocks[1].ξ_an === ξ_L), asi que hay que conservar aparte los valores sin
+    # escalar. Se fija el acople ANTES de init: el integrador evalua el RHS en
+    # t=0 y debe ver ξ(0) = 0.
+    ξ_L0, ξ_R0 = copy(ξ_L), copy(ξ_R)
+    set_lead_coupling!(blocks, ξ_L0, ξ_R0, lead_switch(0.0))
 
     p_model.H0_ab .= H0
     p_model.H_ab  .= H0
@@ -264,6 +295,9 @@ function run_prep()
         llg = intg.t < t_relax ? llg_relax : llg_dyn
 
         DifferentialEquations.step!(intg, Δt, true)
+        # ξ(t_i): exacto para los observables de este paso y valor congelado con
+        # el que arranca el paso siguiente, igual que se trata H_ab.
+        set_lead_coupling!(blocks, ξ_L0, ξ_R0, lead_switch(intg.t))
         Sunny.step!(sys, llg)
         force_driven!(sys, intg.t)
 
@@ -284,7 +318,8 @@ function run_prep()
         update_H_e!(p_model, site_ranges, full_dipoles(sys), j_sd)
 
         if i % 1000 == 0
-            etapa = intg.t < t_on_g3 ? "relajacion" : "driver g3"
+            etapa = intg.t < t_leads ? "encendiendo leads" :
+                    (intg.t < t_on_g3 ? "relajacion" : "driver g3")
             @printf("  t=%7.1f/%.0f  [%s]  I_L=% .3e  I_R=% .3e  elapsed=%.0fs\n",
                     intg.t, t_final, etapa, 0.5 * obs.Iα[1, i], -0.5 * obs.Iα[2, i],
                     time() - started)
@@ -310,8 +345,8 @@ function main()
             j_sd, rad2deg(θ_max), Ω, T_drive)
     @printf("g2(libre)=%s  g3(driver)=%s  g4(libre)=%s\n",
             GROUPS.g2, GROUPS.g3, GROUPS.g4)
-    @printf("t_relax=%.0f  t_on_g3=%.0f  t_rise=%.0f  t_final=%.0f  (%.1f periodos de driver)\n",
-            t_relax, t_on_g3, t_rise, t_final, (t_final - t_on_g3) / T_drive)
+    @printf("t_leads=%.0f (encendido suave de leads)  t_relax=%.0f  t_on_g3=%.0f  t_rise=%.0f  t_final=%.0f  (%.1f periodos de driver)\n",
+            t_leads, t_relax, t_on_g3, t_rise, t_final, (t_final - t_on_g3) / T_drive)
     @printf("Salidas en %s\n", OUT_RUN)
     println("="^70)
     flush(stdout)
