@@ -15,19 +15,21 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
-# Presupuesto de hilos de BLAS para ESTE proceso. Sin la variable de entorno se
-# toman todos los cores, que es lo correcto en una maquina dedicada; en un
-# cluster compartido hay que acotarlo para no acaparar:
-#   OPENBLAS_NUM_THREADS=32 julia --project=. ...
+
 const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREADS)))
 
 # Geometría
 const N_SPINS   = 21
-const Nx, Ny    = 2 * N_SPINS + 1, 1        # 43 sitios electrónicos
+# Sitios desnudos EXTRA en cada extremo, entre el contacto del lead y el primer
+# momento magnetico. Con N_BUF=0 el lead queda pegado al espin (1 solo hopping);
+# con N_BUF=1 hay dos sitios desnudos de por medio a cada lado.
+const N_BUF     = 1
+const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1   # 45 sitios electrónicos
 const Nσ, N_orb = 2, 1
 
-# sitio electrónico (1-based) del espín m: 2,4,...,42
-@inline elec_site(m::Int) = 2 * m
+# sitio electrónico (1-based) del espín m: 3,5,...,43
+#   lead L -> sitio 1 | 2 desnudo | S1 en 3 ... S21 en 43 | 44 desnudo | lead R -> 45
+@inline elec_site(m::Int) = N_BUF + 2 * m
 
 const GROUPS = (
     g2 = 1:10,     # libre (LLG)
@@ -39,8 +41,7 @@ const FREE   = vcat(collect(GROUPS.g2), collect(GROUPS.g4))
 
 # Parametros físicos
 const γso   = 0.1
-const γ     = sqrt(1.0 - γso^2)
-const γ_eff = sqrt(γ^2 + γso^2)
+const γ     = 1.0 # sqrt(1.0 - γso^2)
 
 const E_F = 0.0                    # sin bias en la preparacion
 const β   = 40.0
@@ -86,19 +87,6 @@ function force_driven!(sys, t::Float64)
 end
 
 # Encendido suave del acople a los leads
-#
-#   ξ_α(t) = f(t) · ξ_α,   f: 0 -> 1 en t_leads (misma rampa sin² del driver)
-#
-# La hibridacion entra como Γ_α ∝ ξ_α², asi que Γ crece como f². Conectar los
-# leads de golpe en t=0 proyecta el estado inicial sobre todos los niveles del
-# dispositivo a la vez; los que estan debilmente acoplados quedan resonando sin
-# poder disipar al continuo. Con la rampa el acople crece despacio frente a la
-# escala de nivel del dispositivo y esas resonancias no se excitan.
-#
-# La EOM sigue siendo exacta con ξ dependiente del tiempo: en esta jerarquia ξ
-# solo aparece a tiempos iguales -- el termino de borde t̄=t que alimenta a Ψ y
-# Ω, y el factor externo de Π = Ψ ξᵀ. La memoria la cargan Ψ y Ω, no ξ, asi que
-# no aparecen terminos ∂_t ξ.
 @inline lead_switch(t::Float64) = smooth_switch(t, t_leads)
 
 function set_lead_coupling!(blocks, ξ_L0, ξ_R0, f::Float64)
@@ -141,13 +129,13 @@ function update_H_s_free!(sys, σx_i_now)
 end
 
 # Metadatos compartidos por todas las salidas
-prep_params() = (γ = γ, γso = γso, γ_eff = γ_eff, j_sd = j_sd, θmax = θ_max, Ω = Ω,
+prep_params() = (γ = γ, γso = γso, j_sd = j_sd, θmax = θ_max, Ω = Ω,
                  E_F = E_F, β = β, N_λ1 = N_λ1, N_λ2 = N_λ2, Δt = Δt,
                  t_on_g3 = t_on_g3, t_rise = t_rise, t_leads = t_leads,
                  t_relax = t_relax, t_final = t_final,
                  damping_relax = damping_relax, damping_dyn = damping_dyn, kT = kT)
 
-geometry() = (N_SPINS = N_SPINS, Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb)
+geometry() = (N_SPINS = N_SPINS, N_BUF = N_BUF, Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb)
 
 # Checkpoint: lo unico con lo que se puede reanudar la dinamica
 function save_checkpoint(intg, sys)
@@ -218,13 +206,15 @@ function write_params_label()
         println(io, "")
         println(io, "N_SPINS = ", N_SPINS, "   Nx = ", Nx, "   Ny = ", Ny,
                     "   Nσ = ", Nσ, "   N_orb = ", N_orb)
+        println(io, "N_BUF   = ", N_BUF, "   (sitios desnudos extra por extremo)")
+        println(io, "sitios de espin: ", [elec_site(m) for m in 1:N_SPINS])
+        println(io, "leads en los sitios 1 y ", Nx)
         println(io, "g2 = ", GROUPS.g2, "  (libre)")
         println(io, "g3 = ", GROUPS.g3, "  (driver, precesion uniforme)")
         println(io, "g4 = ", GROUPS.g4, "  (libre)")
         println(io, "")
         println(io, "γ       = ", γ)
         println(io, "γso     = ", γso)
-        println(io, "γ_eff   = ", γ_eff)
         println(io, "j_sd    = ", j_sd)
         println(io, "θ_max   = ", rad2deg(θ_max), " deg (", θ_max, " rad)")
         println(io, "Ω       = ", Ω, "   (periodo T = ", T_drive, ")")
@@ -267,10 +257,6 @@ function run_prep()
     blocks = [SelfEnergyBlock(:left,  p_model.Nc, N_λ1, N_λ2, Σᴸ, Σᴳ, χ, ξ_L),
               SelfEnergyBlock(:right, p_model.Nc, N_λ1, N_λ2, Σᴸ, Σᴳ, χ, ξ_R)]
 
-    # SelfEnergyBlock guarda la referencia al arreglo, no una copia
-    # (blocks[1].ξ_an === ξ_L), asi que hay que conservar aparte los valores sin
-    # escalar. Se fija el acople ANTES de init: el integrador evalua el RHS en
-    # t=0 y debe ver ξ(0) = 0.
     ξ_L0, ξ_R0 = copy(ξ_L), copy(ξ_R)
     set_lead_coupling!(blocks, ξ_L0, ξ_R0, lead_switch(0.0))
 
@@ -345,8 +331,8 @@ function main()
     println("="^70)
     println("PREPARACION DEL STEADY STATE   (sin g1: 10 libres | driver | 10 libres)")
     println("="^70)
-    @printf("Cadena Rashba: Nx=%d (=2·%d+1)  γ=%.4f  γso=%.4f  γ_eff=%.4f\n",
-            Nx, N_SPINS, γ, γso, γ_eff)
+    @printf("Cadena Rashba: Nx=%d  N_SPINS=%d  N_BUF=%d  γ=%.4f  γso=%.4f\n",
+            Nx, N_SPINS, N_BUF, γ, γso)
     @printf("Jsd=%.3f  θmax=%.2f°  Ω=%.4f  (periodo T=%.1f)\n",
             j_sd, rad2deg(θ_max), Ω, T_drive)
     @printf("g2(libre)=%s  g3(driver)=%s  g4(libre)=%s\n",

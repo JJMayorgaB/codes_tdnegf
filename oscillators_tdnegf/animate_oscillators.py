@@ -65,7 +65,7 @@ _TRACK_SPEC = [
     ('g4', lambda g: g[-1],            'Right, Free', '#2a9d5c'),
 ]
 TRACKED = [(pick(GROUPS[name]),
-            f'{name}, site {2 * pick(GROUPS[name])} ({desc})',
+            f'{name}, site {rc.elec_site(pick(GROUPS[name]))} ({desc})',
             color)
            for name, pick, desc, color in _TRACK_SPEC if GROUPS.get(name)]
 

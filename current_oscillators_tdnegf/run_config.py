@@ -53,6 +53,23 @@ def parse_groups(jl_path=JL_PATH):
     return groups
 
 
+def elec_site(m, jl_path=JL_PATH):
+    """Sitio electronico del espin m, leyendo elec_site() de oscillators.jl.
+
+    El mapeo depende de N_BUF (sitios desnudos entre el lead y el primer momento),
+    asi que no se puede hardcodear como 2*m.
+    """
+    with open(jl_path, encoding='utf-8') as f:
+        src = f.read()
+    expr = re.search(r'elec_site\(m::Int\)\s*=\s*(.+?)\s*$', src, re.M)
+    if not expr:
+        return 2 * m
+    env = {'m': m}
+    nbuf = re.search(r'^const\s+N_BUF\s*=\s*(\d+)', src, re.M)
+    env['N_BUF'] = int(nbuf.group(1)) if nbuf else 0
+    return int(eval(expr.group(1).split('#')[0].strip(), {'__builtins__': {}}, env))
+
+
 def _fmt(x):
     return repr(round(float(x), 4)).replace('.', 'p').replace('-', 'm')
 

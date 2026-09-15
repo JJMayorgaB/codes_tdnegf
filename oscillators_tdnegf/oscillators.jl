@@ -47,11 +47,16 @@ const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREAD
 
 # Geometría
 const N_SPINS   = 26
-const Nx, Ny    = 2 * N_SPINS + 1, 1        
+# Sitios desnudos EXTRA en cada extremo, entre el contacto del lead y el primer
+# momento magnetico. Con N_BUF=0 el lead queda pegado al espin (1 solo hopping);
+# con N_BUF=1 hay dos sitios desnudos de por medio a cada lado.
+const N_BUF     = 1
+const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1   # 55 sitios electrónicos
 const Nσ, N_orb = 2, 1
 
-# sitio electrónico del espín m: 2,4,...,52
-@inline elec_site(m::Int) = 2 * m
+# sitio electrónico del espín m: 3,5,...,53
+#   lead L -> sitio 1 | 2 desnudo | S1 en 3 ... S26 en 53 | 54 desnudo | lead R -> 55
+@inline elec_site(m::Int) = N_BUF + 2 * m
 
 const GROUPS = (
     g1 = 1:5,      # onda viajer
@@ -197,7 +202,7 @@ function update_H_s_free!(sys, σx_i_now)
 end
 
 # Metadatos
-geometry() = (N_SPINS = N_SPINS, Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb)
+geometry() = (N_SPINS = N_SPINS, N_BUF = N_BUF, Nx = Nx, Ny = Ny, Nσ = Nσ, N_orb = N_orb)
 
 run_params(cfg) = (γ = γ, γso = γso, γ_eff = γ_eff, j_sd = j_sd, θmax = θ_max, Ω = Ω,
                    k = cfg.k, E_F = E_F, β = β, N_λ1 = N_λ1, N_λ2 = N_λ2, Δt = Δt,
@@ -309,6 +314,9 @@ function write_params_label(outdir, modo, sel; t_on_g1 = nothing)
         println(io, "")
         println(io, "N_SPINS = ", N_SPINS, "   Nx = ", Nx, "   Ny = ", Ny,
                     "   Nσ = ", Nσ, "   N_orb = ", N_orb)
+        println(io, "N_BUF   = ", N_BUF, "   (sitios desnudos extra por extremo)")
+        println(io, "sitios de espin: ", [elec_site(m) for m in 1:N_SPINS])
+        println(io, "leads en los sitios 1 y ", Nx)
         println(io, "g1 = ", GROUPS.g1, modo == :prep ? "  (onda viajera, APAGADA)" :
                                                         "  (onda viajera, ENCENDIDA)")
         println(io, "g2 = ", GROUPS.g2, "  (libre)")
@@ -451,8 +459,8 @@ function run_prep()
     println("="^70)
     println("MODO prep -- PREPARACION DEL STEADY STATE  (g1 apagado)")
     println("="^70)
-    @printf("Cadena Rashba: Nx=%d (=2·%d+1)  γ=%.4f  γso=%.4f  γ_eff=%.4f\n",
-            Nx, N_SPINS, γ, γso, γ_eff)
+    @printf("Cadena Rashba: Nx=%d  N_SPINS=%d  N_BUF=%d  γ=%.4f  γso=%.4f  γ_eff=%.4f\n",
+            Nx, N_SPINS, N_BUF, γ, γso, γ_eff)
     @printf("Jsd=%.3f  θmax=%.2f°  Ω=%.4f  (periodo T=%.1f)\n",
             j_sd, rad2deg(θ_max), Ω, T_drive)
     @printf("g1(onda,OFF)=%s  g2(libre)=%s  g3(driver)=%s  g4(libre)=%s\n",
