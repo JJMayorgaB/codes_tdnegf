@@ -73,18 +73,15 @@ def main():
     # Flecha apuntando al plateau
     x_arrow = 80 * 0.9
     y_text = plateau * 1.4
-    label = (r'$I_{\text{R}}(t\!\to\!\infty)/V_b = ' + str(args.channels) + r'e^2/h$')
+    label = (r'$\text{I}_{\text{R}}(\text{t}\!\to\!\infty)/\text{V}_b = ' + str(args.channels) + r'\text{e}^2/\text{h}$')
     ax.annotate(label,
-                xy=(x_arrow, plateau),
+                xy=(x_arrow, plateau*1.025),
                 xytext=(x_arrow*0.65, y_text*0.95),
                 ha='center', va='top', fontsize=20,
                 arrowprops=dict(arrowstyle='->', lw=1.5, color='black',
                                 shrinkA=0, shrinkB=2))
-
-    ax.text(0.05, 0.125, r'$eV_b = 0.01\,\gamma$', transform=ax.transAxes, ha='left', va='top', fontsize=20)
-
     ax.set_xlabel(r'Time (fs)')
-    ax.set_ylabel(r'$I_{\text{R}}\ (2e\gamma/h)$')
+    ax.set_ylabel(r'$\text{I}_{\text{R}}\ (2\text{e}\gamma/\text{h})$')
     ax.set_xlim(t.min(), 80)
     ax.set_ylim(0.0, 0.03)
 
