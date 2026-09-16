@@ -20,15 +20,11 @@ const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREAD
 
 # Geometría
 const N_SPINS   = 21
-# Sitios desnudos EXTRA en cada extremo, entre el contacto del lead y el primer
-# momento magnetico. Con N_BUF=0 el lead queda pegado al espin (1 solo hopping);
-# con N_BUF=1 hay dos sitios desnudos de por medio a cada lado.
+
 const N_BUF     = 1
-const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1   # 45 sitios electrónicos
+const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1   
 const Nσ, N_orb = 2, 1
 
-# sitio electrónico (1-based) del espín m: 3,5,...,43
-#   lead L -> sitio 1 | 2 desnudo | S1 en 3 ... S21 en 43 | 44 desnudo | lead R -> 45
 @inline elec_site(m::Int) = N_BUF + 2 * m
 
 const GROUPS = (
@@ -41,17 +37,17 @@ const FREE   = vcat(collect(GROUPS.g2), collect(GROUPS.g4))
 
 # Parametros físicos
 const γso   = 0.1
-const γ     = 1.0 # sqrt(1.0 - γso^2)
+const γ     = 1.0  
 
 const E_F = 0.0                    # sin bias en la preparacion
 const β   = 40.0
 const N_λ1, N_λ2 = 49, 30
-const j_sd = 0.5
+const j_sd = 0.1
 
 const Δt = 0.1
 
 const damping_relax = 1.0
-const damping_dyn   = 0.1
+const damping_dyn   = 0.05
 const kT            = 0.0
 
 # driving

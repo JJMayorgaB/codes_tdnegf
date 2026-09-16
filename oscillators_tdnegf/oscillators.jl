@@ -1,28 +1,4 @@
 #!/usr/bin/env julia
-#=
-  oscillators.jl  --  DOS MODOS
-
-    prep    (por defecto)  arranca en frio, lleva la cadena a su estado
-                           estacionario con solo el driver g3 encendido, y
-                           guarda un CHECKPOINT COMPLETO al final.
-
-    resume                 carga ese checkpoint y continua la dinamica desde
-                           t_ckpt encendiendo g1 (la onda viajera), una rama
-                           por cada (r, signo de k).
-
-  Uso:
-    julia --project=. oscillators_tdnegf/oscillators.jl
-    julia --project=. oscillators_tdnegf/oscillators.jl resume
-    julia --project=. oscillators_tdnegf/oscillators.jl resume r1p0_kpos r1p0_kneg
-
-  El checkpoint guarda el vector de estado del integrador (ρ_ab + auxiliares de
-  los leads) y la configuracion de espines. Los observables por si solos NO
-  alcanzan para reanudar: la memoria de los leads no se puede reconstruir.
-
-  Salidas:
-    prep     output/steady_state_<param_tag>/
-    resume   output/pumping_<param_tag>/
-=#
 
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
@@ -39,23 +15,16 @@ using JLD2
 
 const OUT = joinpath(@__DIR__, "output"); mkpath(OUT)
 
-# Presupuesto de hilos de BLAS para ESTE proceso. Sin la variable de entorno se
-# toman todos los cores, que es lo correcto en una maquina dedicada; en un
-# cluster compartido hay que acotarlo para no acaparar:
-#   OPENBLAS_NUM_THREADS=32 julia --project=. ...
+
 const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREADS)))
 
 # Geometría
 const N_SPINS   = 26
-# Sitios desnudos EXTRA en cada extremo, entre el contacto del lead y el primer
-# momento magnetico. Con N_BUF=0 el lead queda pegado al espin (1 solo hopping);
-# con N_BUF=1 hay dos sitios desnudos de por medio a cada lado.
+
 const N_BUF     = 1
 const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1   # 55 sitios electrónicos
 const Nσ, N_orb = 2, 1
 
-# sitio electrónico del espín m: 3,5,...,53
-#   lead L -> sitio 1 | 2 desnudo | S1 en 3 ... S26 en 53 | 54 desnudo | lead R -> 55
 @inline elec_site(m::Int) = N_BUF + 2 * m
 
 const GROUPS = (
@@ -75,7 +44,7 @@ const γ_eff = sqrt(γ^2 + γso^2)
 const E_F = 0.0                    # sin bias
 const β   = 40.0
 const N_λ1, N_λ2 = 49, 30
-const j_sd = 0.5
+const j_sd = 0.1
 
 const Δt = 0.1
 
@@ -145,19 +114,6 @@ function force_driven!(sys, t::Float64, k::Float64, t_on_g1::Float64)
 end
 
 # Encendido suave del acople a los leads
-#
-#   ξ_α(t) = f(t) · ξ_α,   f: 0 -> 1 en t_leads (misma rampa sin² del driver)
-#
-# La hibridacion entra como Γ_α ∝ ξ_α², asi que Γ crece como f². Conectar los
-# leads de golpe en t=0 proyecta el estado inicial sobre todos los niveles del
-# dispositivo a la vez; los que estan debilmente acoplados quedan resonando sin
-# poder disipar al continuo. Con la rampa el acople crece despacio frente a la
-# escala de nivel del dispositivo y esas resonancias no se excitan.
-#
-# La EOM sigue siendo exacta con ξ dependiente del tiempo: en esta jerarquia ξ
-# solo aparece a tiempos iguales -- el termino de borde t̄=t que alimenta a Ψ y
-# Ω, y el factor externo de Π = Ψ ξᵀ. La memoria la cargan Ψ y Ω, no ξ, asi que
-# no aparecen terminos ∂_t ξ.
 @inline lead_switch(t::Float64) = smooth_switch(t, t_leads)
 
 function set_lead_coupling!(blocks, ξ_L0, ξ_R0, f::Float64)
@@ -371,11 +327,6 @@ function run_case(cfg::RunCfg, Rλ, zλ, u0_init, dipoles0)
     blocks = [SelfEnergyBlock(:left,  p_model.Nc, N_λ1, N_λ2, Σᴸ, Σᴳ, χ, ξ_L),
               SelfEnergyBlock(:right, p_model.Nc, N_λ1, N_λ2, Σᴸ, Σᴳ, χ, ξ_R)]
 
-    # SelfEnergyBlock guarda la referencia al arreglo, no una copia
-    # (blocks[1].ξ_an === ξ_L), asi que hay que conservar aparte los valores sin
-    # escalar. Se fija el acople ANTES de init: el integrador evalua el RHS en
-    # t_start y debe ver ξ(t_start). En resume t_start ≫ t_leads -> f=1, o sea
-    # el acople completo con el que se guardo el checkpoint.
     ξ_L0, ξ_R0 = copy(ξ_L), copy(ξ_R)
     set_lead_coupling!(blocks, ξ_L0, ξ_R0, lead_switch(cfg.t_start))
 

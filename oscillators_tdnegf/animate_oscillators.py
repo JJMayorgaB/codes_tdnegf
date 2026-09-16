@@ -64,10 +64,21 @@ _TRACK_SPEC = [
     ('g3', lambda g: g[0],             'Driver',      '#c1272d'),
     ('g4', lambda g: g[-1],            'Right, Free', '#2a9d5c'),
 ]
-TRACKED = [(pick(GROUPS[name]),
-            f'{name}, site {rc.elec_site(pick(GROUPS[name]))} ({desc})',
-            color)
-           for name, pick, desc, color in _TRACK_SPEC if GROUPS.get(name)]
+def _tracked(spins, sites):
+    """Espines rastreados, con su sitio electronico REAL tomado del CSV.
+
+    El numero de sitio sale de los datos y no de oscillators.jl a proposito: si
+    la geometria del .jl cambia despues de una corrida (p.ej. al mover N_BUF),
+    las etiquetas de datos viejos seguirian siendo correctas.
+    """
+    site_of = {int(m): int(s) for m, s in zip(spins, sites)}
+    out = []
+    for name, pick, desc, color in _TRACK_SPEC:
+        if not GROUPS.get(name):
+            continue
+        m = pick(GROUPS[name])
+        out.append((m, f'{name}, site {site_of.get(m, "?")} ({desc})', color))
+    return out
 
 
 def detect_spin_columns(columns):
@@ -122,6 +133,8 @@ def build_figure(t, spins, sites, S, title_label):
     x = np.linspace(0.0, 12.0, nspin)
     x_lo, x_hi = x[0] - 1.0, x[-1] + 1.0
     driven_idx = [j for j, m in enumerate(spins) if m in DRIVEN]
+
+    TRACKED = _tracked(spins, sites)
 
     # índice (0-based, en el orden de `spins`) de cada espín rastreado
     track_idx = [int(np.where(spins == m)[0][0]) for m, _, _ in TRACKED]
