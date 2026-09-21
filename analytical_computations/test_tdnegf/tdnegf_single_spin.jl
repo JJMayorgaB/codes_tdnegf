@@ -18,7 +18,10 @@ const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREAD
 
 # geometria
 const N_SPINS   = 1
-const N_BUF     = 21
+# N_BUF=20 da N_LEAD_OUT = min(19,20) = 19, o sea sitios n=0..19: EXACTAMENTE
+# los 20 que produce sweep_leads(sites=0:19) del analitico. Ademas τ es ~19%
+# menor que con 21 (4310 vs 5320), asi que converge antes.
+const N_BUF     = 20
 const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1     
 const Nσ, N_orb = 2, 1
 
@@ -34,10 +37,16 @@ const FREE   = Int[]
 const N_LEAD_OUT = min(N_BUF - 1, 20)
 lead_site(α::Symbol, n::Int) = α === :R ? SITE_C + 1 + n : SITE_C - 1 - n
 
-#parametros 
-const γso   = 0.1         
-const γ     = 1.0         
-const E_F   = 0.0          
+#parametros
+const γso   = 0.1
+# γ = sqrt(1-γso²) hace que el ancho de banda de la cadena, 2*sqrt(γ²+γso²),
+# sea exactamente 2 -- el mismo del lead. La banda del lead NO se puede ajustar:
+# sale de data/z_Semicircle_N49.txt, una tabla de polos precalculada con borde
+# fijo en |ω|=2, y el γ que recibe build_Σᴸ_nλ solo entra por ϵ_n(n,Ny), la
+# dispersion transversal, que vale cero con Ny=1. Sin esto queda un desajuste
+# de impedancia del 0.5% en los contactos.
+const γ     = sqrt(1 - γso^2)        # = 0.994987
+const E_F   = 0.0
 const β     = 40.0
 const N_λ1, N_λ2 = 49, 30
 const j_sd  = 0.2
@@ -52,14 +61,16 @@ const PREC_SIGN = +1.0
 const θ_max   = deg2rad(10.0)
 const Ω       = 0.005
 const T_drive = 2π / Ω             
+# Todos los tiempos en unidades del periodo del driver T_drive = 2π/Ω = 1256.6,
+# que es la escala natural del problema y la que usa el analitico de Floquet.
 const t_leads = 630.0               # encendido suave del acople a los leads
-const t_on_g3 = 2000.0              # arranca el driver
+const t_on_g3 = 5  * T_drive        # arranca el driver           = 6283.2
 const t_rise  = 630.0               # rampa del angulo del cono
 const t_relax = t_on_g3
-const t_final = 10000.0            
+const t_final = 20 * T_drive        # evolucion total             = 25132.7
 
 # Salida: TODA la dinamica, transitorio incluido, submuestreada cada OUT_STRIDE
-const OUT_STRIDE = 5      # Δt=0.1 -> Δt_out = 0.5
+const OUT_STRIDE = 20     # Δt=0.1 -> Δt_out = 2.0  (628 puntos por periodo)
 
 @inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
 param_tag() = "single_gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))_buf$(N_BUF)"

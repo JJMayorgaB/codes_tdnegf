@@ -38,6 +38,10 @@ DEFAULT_RHO_CSV = os.path.join(SCRIPT_DIR, 'output', 'inbedding_rho_t.csv')
 # las figuras del analitico con las de TDNEGF, que salen del mismo script.
 PREFIX = 'inbedding'
 
+# Sufijo del nombre, lo pone --t-min. Asi una figura recortada a la cola no
+# sobrescribe la de la evolucion completa.
+SUFFIX = ''
+
 
 def _fmt_axes(ax):
     ax.tick_params(axis='both', direction='in', bottom=True, top=True,
@@ -124,7 +128,7 @@ def _top_legend(fig, handles):
 def _save(fig, outdir, name):
     fig.tight_layout()
     for ext in ('jpg', 'svg', 'pdf'):
-        path = os.path.join(outdir, f'{name}.{ext}')
+        path = os.path.join(outdir, f'{name}{SUFFIX}.{ext}')
         fig.savefig(path, bbox_inches='tight', dpi=300)
         print(f'  -> {path}')
     plt.close(fig)
@@ -262,17 +266,32 @@ def main():
                          'Por defecto se eligen 4 con espaciado geometrico.')
     ap.add_argument('--prefix', default='inbedding',
                     help='prefijo de los archivos de salida (usa tdnegf para el test)')
+    ap.add_argument('--t-min', type=float, default=None,
+                    help='recorta las figuras temporales a t >= t_min, para dejar '
+                         'solo la cola estacionaria. El valor queda en el nombre '
+                         'del archivo, asi no pisa la figura de la evolucion completa.')
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
-    global PREFIX
+    global PREFIX, SUFFIX
     PREFIX = args.prefix
+    if args.t_min is not None:
+        SUFFIX = f'_tmin{args.t_min:g}'
 
     lead = args.lead.strip()
     df_rho = pd.read_csv(args.rho_csv)
     dr = df_rho[df_rho['lead'] == lead]
     if dr.empty:
         raise SystemExit(f'no hay datos para el lead {lead} en {args.rho_csv}')
+
+    # El recorte temporal solo aplica a los observables en el tiempo; la LDOS
+    # esta resuelta en omega y no tiene eje temporal que recortar.
+    if args.t_min is not None:
+        dr = dr[dr['t'] >= args.t_min]
+        if dr.empty:
+            raise SystemExit(f'no quedan datos con t >= {args.t_min}')
+        print(f'  recorte temporal: t >= {args.t_min:g}  '
+              f'({dr["t"].min():.1f} a {dr["t"].max():.1f})')
 
     # El CSV de LDOS es OPCIONAL: TDNEGF propaga en el tiempo y nunca calcula
     # A(ω), asi que sus salidas no lo tienen. Los otros tres paneles si sirven

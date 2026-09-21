@@ -1,25 +1,4 @@
 #!/usr/bin/env julia
-#=
-  floquet_gf.jl -- Funciones de Green de Floquet del sitio manejado (region C).
-
-  Resuelve
-      [ω I + Ω̌ + J_sd M̌ - Σ̌ʳ(ω)] Ǧʳ(ω) = I
-  (el signo + viene de H_sd = -J_sd σ·M, convenio del codigo TDNEGF:
-   Ǧʳ = [ω + Ω̌ - Ȟ_C - Σ̌ʳ]⁻¹  con  Ȟ_C = -J_sd M̌)
-  y despues
-      Ǧ< = Ǧʳ Σ̌< Ǧᵃ,      Ǧᵃ = (Ǧʳ)†,   Σ̌<_{nm} = i f(ω+nΩ) Γ(ω+nΩ) δ_{nm}
-
-  Convenciones (documento analitico):
-      Ǧ_{nm}(ω) = G(ω+nΩ, ω+mΩ),   Ω̌_{nm} = nΩ δ_{nm},   M̌_{nm} = M̂_{m-n}
-      M̂₀ = cosθ σ_z,  M̂₊₁ = sinθ σ₋,  M̂₋₁ = sinθ σ₊
-  Indice fisico n ∈ -N:N  ->  indice de arreglo j = n+N+1 ∈ 1:N_F,  N_F = 2N+1.
-
-  RAMA DE LA RAIZ: se elige la que da Im Σʳ < 0. Con η finito ese criterio
-  funciona en toda la recta real, incluida la region |ω| > 2γ donde Im Σʳ es
-  O(η) pero con signo definido. La rama principal de sqrt(z²-4γ²) NO sirve:
-  tiene un corte espurio en el eje imaginario y da el signo equivocado para
-  todo ω < 0.
-=#
 
 using LinearAlgebra
 using Printf
@@ -36,9 +15,17 @@ const σp = (σx + im*σy) / 2      # σ₊
 const σm = (σx - im*σy) / 2      # σ₋
 
 # parametros
+#
+# t = sqrt(1-λ²) NO es arbitrario: hace que γ_band = sqrt(t²+λ²) = 1 exacto, o
+# sea banda [-2,2]. Los leads de TDNEGF usan una tabla de polos precalculada
+# (data/z_Semicircle_N49.txt) con borde de banda fijo en |ω|=2 y SIN parametro
+# de escala -- el γ que se le pasa a build_Σᴸ_nλ solo entra por la dispersion
+# transversal del liston, que es cero para Ny=1. Asi que la banda del lead no
+# se puede mover; hay que ajustar la cadena para que coincida con ella.
+# λ va primero para que t pueda referenciarla en su valor por defecto.
 Base.@kwdef struct FloquetParams
-    t::Float64    = 1.0              # hopping γ 
     λ::Float64    = 0.1              # Rashba γ_SO
+    t::Float64    = sqrt(1 - λ^2)    # hopping γ, fijado para que γ_band = 1
     J_sd::Float64 = 0.2
     θ::Float64    = deg2rad(10.0)    # angulo del cono
     Ω::Float64    = 0.005
