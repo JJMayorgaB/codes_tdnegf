@@ -3,43 +3,27 @@
 include(joinpath(@__DIR__, "floquet_gf.jl"))
 
 #geometria
-"T̂ = -t σ̂₀ - iλ σ̂_y = -γ exp(i θ_R σ̂_y)."
+#T̂ = -t σ̂₀ - iλ σ̂_y = -γ exp(i θ_R σ̂_y)
 T_hop(p::FloquetParams) = -p.t * σ0 - im * p.λ * σy
 θ_R(p::FloquetParams)   = atan(p.λ, p.t)
 
-"""
-Hoppings que entran en Σ̌_inb = T̂_in Ǧ_C T̂_out.
-Con H_{j,j+1}=T̂ y el sitio manejado en j=0:
-  lead derecho  (superficie j=+1):  H_{R0,C}=T̂†,  H_{C,R0}=T̂
-  lead izquierdo(superficie j=-1):  H_{L0,C}=T̂ ,  H_{C,L0}=T̂†
-"""
 function T_inout(lead::Symbol, p::FloquetParams)
     T = T_hop(p)
     return lead === :R ? (adjoint(T), T) : (T, adjoint(T))
 end
 
-"""
-Hopping en el sentido de profundidad creciente (el que aparece en G_{n0}) y
-en el sentido de vuelta a la superficie (el de G_{0m}). Para el lead izquierdo
-se intercambian, porque adentrarse significa recorrer la cadena al reves.
-"""
 T_depth(lead::Symbol, p::FloquetParams) =
     lead === :R ? (adjoint(T_hop(p)), T_hop(p)) : (T_hop(p), adjoint(T_hop(p)))
 
 # funciones libres del lead (ǧ_αα)
-"GF de superficie del lead semi-infinito aislado: G₀₀ = Σʳ(ω)/(2γ²)."
 g00_lead(ω::Real, p::FloquetParams; η::Real) = Σr(ω, p; η = η) / (2 * γ_band(p)^2)
 
-"Parametro de la recursion: u = γ² G₀₀². |u| = 1 exactamente dentro de la banda."
+#Parametro de la recursion: u = γ² G₀₀²
 u_lead(ω::Real, p::FloquetParams; η::Real) = γ_band(p)^2 * g00_lead(ω, p; η = η)^2
 
 """
-    g_lead_r(ω, n, m, lead, p; η)
-
-Componentes de la GF retardada del lead AISLADO, segun la recursion del
-documento. Solo se implementan los tres casos que hacen falta:
-
-    G_{nn} = G₀₀ Σ_{p=0}^{n} uᵖ        (suma finita, sin 0/0 en el borde)
+    g_lead_r(ω, n, m, lead, p; η): Componentes de la GF retardada del lead aislado
+    G_{nn} = G₀₀ Σ_{p=0}^{n} uᵖ        
     G_{n0} = (T̂†)ⁿ G₀₀ⁿ⁺¹
     G_{0m} = T̂ᵐ  G₀₀ᵐ⁺¹
 """
@@ -64,21 +48,19 @@ function g_lead_r(ω::Real, n::Int, m::Int, lead::Symbol, p::FloquetParams; η::
     end
 end
 
-"gᵃ_{nm} = (gʳ_{mn})†."
+# gᵃ_{nm} = (gʳ_{mn})†
 g_lead_a(ω::Real, n::Int, m::Int, lead::Symbol, p::FloquetParams; η::Real) =
     adjoint(g_lead_r(ω, m, n, lead, p; η = η))
 
-"""
-g<_{nm} = i f(ω) A_{nm},  A_{nm} = i(gʳ_{nm} - gᵃ_{nm}).
-Los leads arrancan LLENOS, asi que esto NO es cero (a diferencia de ǧ<_C).
-"""
+
+#g<_{nm} = i f(ω) A_{nm},  A_{nm} = i(gʳ_{nm} - gᵃ_{nm}).
 function g_lead_less(ω::Real, n::Int, m::Int, lead::Symbol, p::FloquetParams; η::Real)
     gr = g_lead_r(ω, n, m, lead, p; η = η)
     ga = g_lead_a(ω, n, m, lead, p; η = η)
     return im * fermi(ω, p) * (im * (gr - ga))
 end
 
-"Matriz 2N_F x 2N_F, diagonal en Floquet, con bloques g^comp_{n,m}(ω+kΩ)."
+#Matriz 2N_F x 2N_F, diagonal en Floquet
 function dress(ω::Real, n::Int, m::Int, lead::Symbol, p::FloquetParams;
                η::Real, comp::Symbol)
     nf = n_floquet(p)
@@ -93,13 +75,8 @@ function dress(ω::Real, n::Int, m::Int, lead::Symbol, p::FloquetParams;
     return D
 end
 
-# ------------------------------------------------------- self-energia inbedding
-"""
-Piezas que dependen solo de ω (no de la profundidad): las tres componentes
-Keldysh de Σ̌_inb = T̂_in Ǧ_C T̂_out. Se calculan UNA vez por ω y se reusan
-para todas las profundidades -- por eso barrer 80 profundidades sale casi
-gratis comparado con barrer ω.
-"""
+#self-energia inbedding
+
 struct LeadKernel
     Σr::Matrix{ComplexF64}
     Σa::Matrix{ComplexF64}
@@ -116,8 +93,8 @@ function lead_kernel(ω::Real, lead::Symbol, p::FloquetParams; η::Real)
     return LeadKernel(Ti * Gr * To, Ti * adjoint(Gr) * To, Ti * Gl * To)
 end
 
-# ------------------------------------------ GF del lead en el sitio n (n=0 superficie)
-"Ǧʳ local del lead en el sitio n: ǧʳ_nn + ǧʳ_n0 Σ̌ʳ ǧʳ_0n."
+#GF del lead en el sitio n 
+#Ǧʳ local del lead en el sitio n: ǧʳ_nn + ǧʳ_n0 Σ̌ʳ ǧʳ_0n."
 function Gr_lead(ω::Real, n::Int, lead::Symbol, p::FloquetParams;
                  η::Real, K::Union{LeadKernel,Nothing} = nothing)
     Kr = isnothing(K) ? lead_kernel(ω, lead, p; η = η) : K
@@ -126,11 +103,8 @@ function Gr_lead(ω::Real, n::Int, lead::Symbol, p::FloquetParams;
            dress(ω, 0, n, lead, p; η = η, comp = :r)
 end
 
-"""
-Ǧ< local del lead en el sitio n. Los cuatro terminos de Langreth:
-    ǧ< + ǧ<Σ̌ᵃǧᵃ + ǧʳΣ̌<ǧᵃ + ǧʳΣ̌ʳǧ<
-El primero (borde) NO se puede tirar aqui: los leads arrancan llenos.
-"""
+
+#Ǧ< local del lead en el sitio n: ǧ< + ǧ<Σ̌ᵃǧᵃ + ǧʳΣ̌<ǧᵃ + ǧʳΣ̌ʳǧ<
 function Gless_lead(ω::Real, n::Int, lead::Symbol, p::FloquetParams;
                     η::Real, K::Union{LeadKernel,Nothing} = nothing)
     Kr = isnothing(K) ? lead_kernel(ω, lead, p; η = η) : K
@@ -144,13 +118,9 @@ function Gless_lead(ω::Real, n::Int, lead::Symbol, p::FloquetParams;
            gl_r * Kr.Σr * gr_l
 end
 
-# ---------------------------------------------------------------- observables
-"""
-    ldos_lead(ω, n, lead, p; η) -> Matrix{Float64} (2x2)
+# observables
+#ldos_lead(ω, n, lead, p; η) -> Matrix{Float64} (2x2)
 
-LDOS resuelta en espin en el sitio n del lead: A_n(ω) = -1/π Im Ǧʳ_{nn,00}(ω).
-[1,1] es ↑, [2,2] es ↓, la densidad electronica total es la suma.
-"""
 function ldos_lead(ω::Real, n::Int, lead::Symbol, p::FloquetParams;
                    η::Real, K::Union{LeadKernel,Nothing} = nothing)
     G = fget(Gr_lead(ω, n, lead, p; η = η, K = K), 0, 0, p)
@@ -158,8 +128,7 @@ function ldos_lead(ω::Real, n::Int, lead::Symbol, p::FloquetParams;
 end
 
 """
-    rho_harmonic_lead(p; η, ωmin, ωmax, Nω, n, lead, k=0)
-
+rho_harmonic_lead(p; η, ωmin, ωmax, Nω, n, lead, k=0
 Armonico k de la matriz densidad en el sitio n del lead,
 ρₖ = -i ∫ dω/2π Ǧ<ₖ₀(ω)  (misma derivacion que en floquet_gf.jl: fila=k, col=0).
 """
@@ -175,8 +144,7 @@ function rho_harmonic_lead(p::FloquetParams; η::Real, ωmin::Real, ωmax::Real,
 end
 
 """
-    depth_profile(p; η, ωmin, ωmax, Nω, sites, leads, Kmax)
-
+depth_profile(p; η, ωmin, ωmax, Nω, sites, leads, Kmax)
 Recorre ω por fuera y el sitio del lead por dentro, reusando el LeadKernel, y
 acumula los armonicos ρₖ(n) de todos los sitios a la vez.
 Devuelve Dict{(lead,n,k) => matriz 2x2}.
@@ -201,23 +169,19 @@ function depth_profile(p::FloquetParams; η::Real, ωmin::Real, ωmax::Real, Nω
     return Dict(key => -im .* v .* dω ./ (2π) for (key, v) in acc)
 end
 
-# ---------------------------------------------------------------- diagnosticos
+# diagnosticos
 "Longitud de decaimiento inducida por η: la correccion va como |u|ⁿ, ℓ = -1/ln|u|."
 function decay_length(ω::Real, p::FloquetParams; η::Real)
     au = abs(u_lead(ω, p; η = η))
     return au >= 1 ? Inf : -1 / log(au)
 end
 
-"""
-Rotacion del VECTOR de espin por sitio: 2θ_R (factor 2 de SU(2)->SO(3), ver
-el encabezado). El angulo del hopping es θ_R, pero el vector rota el doble.
-"""
 spin_rot_per_site(p::FloquetParams) = 2 * θ_R(p)
 
 "Periodo espacial de la espiral de Rashba, en sitios: 2π/(2θ_R) = π/θ_R."
 spiral_period(p::FloquetParams) = θ_R(p) == 0 ? Inf : π / θ_R(p)
 
-# ---------------------------------------------------------------- validaciones
+# validaciones
 function validate_leads(p::FloquetParams = FloquetParams(); η::Real = 2e-3)
     ok(b) = b ? "OK" : "FALLA"
     γ = γ_band(p)
@@ -307,7 +271,7 @@ function validate_leads(p::FloquetParams = FloquetParams(); η::Real = 2e-3)
     return nothing
 end
 
-# ---------------------------------------------------------------- barrido
+# barrido
 """
 Los MISMOS observables de floquet_gf.jl, pero resueltos por sitio del lead.
 Guarda dos CSV (formato largo, una fila por (ω,n,lead) o (t,n,lead)):
@@ -325,7 +289,7 @@ function sweep_leads(p::FloquetParams = FloquetParams();
     @printf("sweep_leads: Nω=%d  dω=%.3e  η=%.3e   ℓ(ω=0)=%.1f sitios\n",
             Nω, dω, ηe, decay_length(0.0, p; η = ηe))
 
-    # --- 1. LDOS(ω) por sitio ---------------------------------------------
+    # 1. LDOS(ω) por sitio 
     hdr1  = ["omega", "lead", "site", "LDOS_up", "LDOS_dn", "LDOS_tot"]
     data1 = Matrix{Any}(undef, Nω * length(leads) * length(sites), length(hdr1))
     i1 = 0
@@ -341,7 +305,7 @@ function sweep_leads(p::FloquetParams = FloquetParams();
     writedlm(path1, vcat(permutedims(hdr1), data1), ",")
     println("  -> ", path1)
 
-    # --- 2. ρ(t) y ⟨σ⟩(t): un solo barrido de ω para todos los armonicos ---
+    #2. ρ(t) y ⟨σ⟩(t): un solo barrido de ω para todos los armonicos 
     prof = depth_profile(p; η = ηe, ωmin = ωmin, ωmax = ωmax, Nω = Nω,
                          sites = sites, leads = leads)
     Kmax  = min(2, p.N)
