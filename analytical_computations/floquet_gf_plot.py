@@ -88,13 +88,13 @@ def plot_rho_t(df, outdir, Omega):
     fig, ax = plt.subplots(figsize=(5, 4))
 
     ax.plot(x, n_up, '-', color='red', lw=1.5, zorder=3,
-            label=r'$\rho_{\uparrow\uparrow}$')
+            label=r'$\rho^{\uparrow\uparrow}$')
     ax.plot(x, n_dn, '-', color='blue', lw=1.5, zorder=3,
-            label=r'$\rho_{\downarrow\downarrow}$')
+            label=r'$\rho^{\downarrow\downarrow}$')
     ax.plot(x, re_c, '--', color='0.3', lw=1.3, zorder=2,
-            label=r'$\text{Re}\,\rho_{\uparrow\downarrow}$')
+            label=r'$\text{Re}\,\rho^{\uparrow\downarrow}$')
     ax.plot(x, im_c, ':', color='0.3', lw=1.5, zorder=2,
-            label=r'$\text{Im}\,\rho_{\uparrow\downarrow}$')
+            label=r'$\text{Im}\,\rho^{\uparrow\downarrow}$')
 
     ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
     ax.set_ylabel(r'$\rho(t)$')
@@ -153,9 +153,9 @@ def plot_spin_t(df, outdir, Omega):
 
     fig, ax = plt.subplots(figsize=(5, 4))
 
-    ax.plot(x, sx, '-', color='red', lw=1.5, zorder=3,  label=r'$\langle\sigma_x\rangle$')
-    ax.plot(x, sy, '-', color='blue', lw=1.5, zorder=3,  label=r'$\langle\sigma_y\rangle$')
-    ax.plot(x, sz, '-', color='black', lw=1.5, zorder=3, label=r'$\langle\sigma_z\rangle$')
+    ax.plot(x, sx, '-', color='red', lw=1.5, zorder=3,  label=r'$\langle\sigma^{x}\rangle$')
+    ax.plot(x, sy, '-', color='blue', lw=1.5, zorder=3,  label=r'$\langle\sigma^{y}\rangle$')
+    ax.plot(x, sz, '-', color='black', lw=1.5, zorder=3, label=r'$\langle\sigma^{z}\rangle$')
     ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
 
     ax.set_xlabel(r'$t\, (2\pi/\Omega)$')

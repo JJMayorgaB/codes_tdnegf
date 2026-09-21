@@ -103,6 +103,110 @@ def _sci_yaxis(ax, fontsize=15):
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
 
 
+def _sci_cbar(cb, fontsize=14):
+    """
+    Mismo criterio que _sci_yaxis pero para la barra de color.
+
+    Hace falta sobre todo en el panel de sigma_0: n_tot vive pegado a 1 con
+    variaciones de 1e-5, asi que sin offset cada tick serian seis decimales.
+    """
+    lo, hi = cb.mappable.get_clim()
+    span, mid = hi - lo, 0.5 * (lo + hi)
+    off = False
+    if span > 0 and abs(mid) > 10 * span:
+        step = 10.0 ** np.floor(np.log10(abs(mid)))
+        off = round(mid / step) * step
+    fmt = mticker.ScalarFormatter(useOffset=off, useMathText=True)
+    fmt.set_powerlimits((0, 0))
+    # OJO: hay que asignar a cb.formatter / cb.locator, NO a cb.ax.yaxis. La
+    # Colorbar guarda los suyos aparte y update_ticks() los reimpone sobre el
+    # eje, asi que un set_major_formatter directo se pierde al dibujar.
+    cb.formatter = fmt
+    cb.locator = mticker.MaxNLocator(4)
+    cb.update_ticks()
+    cb.ax.yaxis.get_offset_text().set_fontsize(fontsize)
+    cb.ax.tick_params(labelsize=fontsize)
+
+
+def _grid(df, col, T):
+    """Pasa el CSV largo a una malla (sitio, tiempo) lista para pcolormesh."""
+    p = df.pivot_table(index='site', columns='t', values=col)
+    return p.index.to_numpy(), p.columns.to_numpy() / T, p.to_numpy()
+
+
+def _heatmap(ax, df, col, label, T):
+    """
+    Un cuadrante: eje y = indice de sitio i, eje x = t/T, color = observable.
+
+    Escala lineal y datos crudos. La barra de color autoescala al rango real
+    del observable, que es lo que deja leer los paneles casi constantes.
+    Colormap divergente y centrado en cero solo si el dato cambia de signo;
+    si no, secuencial.
+    """
+    sites, t, Z = _grid(df, col, T)
+    if Z.min() < 0.0 < Z.max():
+        vmax = np.abs(Z).max()
+        kw = dict(cmap='seismic', vmin=-vmax, vmax=vmax)
+    else:
+        kw = dict(cmap='inferno', vmin=Z.min(), vmax=Z.max())
+
+    # shading='nearest' dibuja una celda por sitio: el retículo es discreto y
+    # no hay senal entre sitios, asi que nada de interpolacion bilineal.
+    im = ax.pcolormesh(t, sites + 1, Z, shading='nearest', rasterized=True, **kw)
+    # loc='left': el exponente de la barra de color se dibuja arriba a la
+    # derecha, justo donde caeria un titulo centrado.
+    ax.set_title(label, fontsize=18, pad=6, loc='left')
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=5))
+    _fmt_axes(ax)
+    # rcParams trae axes.axisbelow=True, que deja los ticks por detras de los
+    # artistas. Con curvas no importa, pero el pcolormesh es una superficie
+    # llena y se los come: los ticks 'in' desaparecen. Hay que subirlos.
+    ax.set_axisbelow(False)
+    _sci_cbar(ax.figure.colorbar(im, ax=ax, pad=0.025, fraction=0.046))
+
+
+def plot_rho_map(df, outdir, lead, Omega):
+    """Panel 2x2: las cuatro componentes de la matriz densidad, como heatmaps."""
+    T = 2 * np.pi / Omega
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
+    cols = [('n_up',        r'$\rho^{\uparrow\uparrow}_{i}$'),
+            ('n_dn',        r'$\rho^{\downarrow\downarrow}_{i}$'),
+            ('Re_rho_updn', r'$\text{Re}\,\rho^{\uparrow\downarrow}_{i}$'),
+            ('Im_rho_updn', r'$\text{Im}\,\rho^{\uparrow\downarrow}_{i}$')]
+
+    for ax, (col, lab) in zip(axes.flat, cols):
+        _heatmap(ax, df, col, lab, T)
+    for ax in axes[:, 0]:
+        ax.set_ylabel(r'$i$')
+    for ax in axes[-1, :]:
+        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+    _save(fig, outdir, f'{PREFIX}_rho_map_{lead}')
+
+
+def plot_spin_map(df, outdir, lead, Omega):
+    """
+    Panel 2x2 en la base de Pauli:  sigma_0 | sigma_x  /  sigma_y | sigma_z.
+
+    sigma_0 es la poblacion electronica n_tot = Tr rho. Sale plano en el
+    tiempo a precision de maquina: el cono rota M pero no bombea carga, solo
+    espin. Las bandas horizontales de ese cuadrante son ese resultado.
+    """
+    T = 2 * np.pi / Omega
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
+    cols = [('n_tot', r'$\langle\sigma^{0}_{i}\rangle$'),
+            ('sx',    r'$\langle\sigma^{x}_{i}\rangle$'),
+            ('sy',    r'$\langle\sigma^{y}_{i}\rangle$'),
+            ('sz',    r'$\langle\sigma^{z}_{i}\rangle$')]
+
+    for ax, (col, lab) in zip(axes.flat, cols):
+        _heatmap(ax, df, col, lab, T)
+    for ax in axes[:, 0]:
+        ax.set_ylabel(r'$i$')
+    for ax in axes[-1, :]:
+        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+    _save(fig, outdir, f'{PREFIX}_spin_map_{lead}')
+
+
 def _site_legend(fig, colors):
     """
     Leyenda de sitios en una sola fila, arriba de todos los paneles.
@@ -140,8 +244,8 @@ def plot_ldos(df, outdir, lead, wmax=None):
     colors = _site_colors(sites)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    cols = [('LDOS_up', r'$A^{\uparrow}_i(\omega)\ (1/\gamma)$'),
-            ('LDOS_dn', r'$A^{\downarrow}_i(\omega)\ (1/\gamma)$')]
+    cols = [('LDOS_up', r'$A^{\uparrow}_{i}(\omega)\ (1/\gamma)$'),
+            ('LDOS_dn', r'$A^{\downarrow}_{i}(\omega)\ (1/\gamma)$')]
 
     for ax, (col, ylab) in zip(axes, cols):
         for n in sites:
@@ -161,67 +265,6 @@ def plot_ldos(df, outdir, lead, wmax=None):
     _save(fig, outdir, f'{PREFIX}_ldos_{lead}')
 
 
-def plot_rho_t(df, outdir, lead, Omega):
-    """Panel 2x2: las cuatro componentes de la matriz densidad."""
-    T = 2 * np.pi / Omega
-    sites = sorted(df['site'].unique())
-    colors = _site_colors(sites)
-
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
-    cols = [('n_up',        r'$\rho_{\uparrow\uparrow}(t)$'),
-            ('n_dn',        r'$\rho_{\downarrow\downarrow}(t)$'),
-            ('Re_rho_updn', r'$\text{Re}\,\rho_{\uparrow\downarrow}(t)$'),
-            ('Im_rho_updn', r'$\text{Im}\,\rho_{\uparrow\downarrow}(t)$')]
-
-    for ax, (col, ylab) in zip(axes.flat, cols):
-        for n in sites:
-            s = df[df['site'] == n].sort_values('t')
-            x = s['t'].to_numpy() / T
-            ax.plot(x, s[col].to_numpy(), '-', color=colors[n], lw=1.4, zorder=3)
-        ax.set_ylabel(ylab)
-        ax.set_xlim(x.min(), x.max())
-        _fmt_axes(ax)
-        _sci_yaxis(ax)
-
-    for ax in axes[-1, :]:
-        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
-    _site_legend(fig, colors)
-    _save(fig, outdir, f'{PREFIX}_rho_t_{lead}')
-
-
-def plot_spin_t(df, outdir, lead, Omega):
-    """Panel 2x2: un sitio por panel, las tres componentes de espin en cada uno."""
-    T = 2 * np.pi / Omega
-    sites = sorted(df['site'].unique())[:4]
-
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
-    comps = [('sx', 'red',   r'$\langle\sigma_x\rangle$'),
-             ('sy', 'blue',  r'$\langle\sigma_y\rangle$'),
-             ('sz', 'black', r'$\langle\sigma_z\rangle$')]
-
-    for ax, n in zip(axes.flat, sites):
-        s = df[df['site'] == n].sort_values('t')
-        x = s['t'].to_numpy() / T
-        for col, color, _ in comps:
-            ax.plot(x, s[col].to_numpy(), '-', color=color, lw=1.5, zorder=3)
-        ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
-        ax.set_title(rf'$i={n + 1}$', fontsize=18)
-        ax.set_xlim(x.min(), x.max())
-        _fmt_axes(ax)
-        _sci_yaxis(ax)
-
-    for ax in axes.flat[len(sites):]:          # si hay menos de 4 sitios
-        ax.set_visible(False)
-    for ax in axes[:, 0]:
-        ax.set_ylabel(r'$\langle\boldsymbol{\hat{\sigma}}\rangle_i(t)$')
-    for ax in axes[-1, :]:
-        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
-
-    _top_legend(fig, [Line2D([], [], color=c, lw=2.0, label=lab)
-                      for _, c, lab in comps])
-    _save(fig, outdir, f'{PREFIX}_spin_t_{lead}')
-
-
 def plot_occupation_t(df, outdir, lead, Omega):
     """Panel 1x2: ocupacion de espin up y de espin down, lado a lado."""
     T = 2 * np.pi / Omega
@@ -229,8 +272,8 @@ def plot_occupation_t(df, outdir, lead, Omega):
     colors = _site_colors(sites)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    cols = [('n_up', r'$n^{\uparrow}(t)$'),
-            ('n_dn', r'$n^{\downarrow}(t)$')]
+    cols = [('n_up', r'$n^{\uparrow}_{i}(t)$'),
+            ('n_dn', r'$n^{\downarrow}_{i}(t)$')]
 
     for ax, (col, ylab) in zip(axes, cols):
         for n in sites:
@@ -266,17 +309,21 @@ def main():
                          'Por defecto se eligen 4 con espaciado geometrico.')
     ap.add_argument('--prefix', default='inbedding',
                     help='prefijo de los archivos de salida (usa tdnegf para el test)')
-    ap.add_argument('--t-min', type=float, default=None,
-                    help='recorta las figuras temporales a t >= t_min, para dejar '
-                         'solo la cola estacionaria. El valor queda en el nombre '
-                         'del archivo, asi no pisa la figura de la evolucion completa.')
+    corte = ap.add_mutually_exclusive_group()
+    corte.add_argument('--t-min', type=float, default=None,
+                       help='recorta las figuras temporales a t >= t_min, para dejar '
+                            'solo la cola estacionaria. El valor queda en el nombre '
+                            'del archivo, asi no pisa la figura de la evolucion completa.')
+    corte.add_argument('--last-periods', type=float, default=None, metavar='N',
+                       help='igual que --t-min pero contando N periodos hacia atras '
+                            'desde el ultimo tiempo del CSV: t_min = t_max - N*T. '
+                            'Pensado para TDNEGF, donde t_final depende de la corrida '
+                            'y calcular el corte a mano es incomodo.')
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
     global PREFIX, SUFFIX
     PREFIX = args.prefix
-    if args.t_min is not None:
-        SUFFIX = f'_tmin{args.t_min:g}'
 
     lead = args.lead.strip()
     df_rho = pd.read_csv(args.rho_csv)
@@ -286,12 +333,24 @@ def main():
 
     # El recorte temporal solo aplica a los observables en el tiempo; la LDOS
     # esta resuelta en omega y no tiene eje temporal que recortar.
-    if args.t_min is not None:
-        dr = dr[dr['t'] >= args.t_min]
+    # --last-periods necesita t_max, asi que el corte se resuelve despues de
+    # leer el CSV; --t-min es el valor absoluto y no depende de los datos.
+    t_min = args.t_min
+    if args.last_periods is not None:
+        T = 2 * np.pi / args.Omega
+        t_min = dr['t'].max() - args.last_periods * T
+        SUFFIX = f'_last{args.last_periods:g}T'
+    elif t_min is not None:
+        SUFFIX = f'_tmin{t_min:g}'
+
+    if t_min is not None:
+        dr = dr[dr['t'] >= t_min]
         if dr.empty:
-            raise SystemExit(f'no quedan datos con t >= {args.t_min}')
-        print(f'  recorte temporal: t >= {args.t_min:g}  '
-              f'({dr["t"].min():.1f} a {dr["t"].max():.1f})')
+            raise SystemExit(f'no quedan datos con t >= {t_min}')
+        print(f'  recorte temporal: t >= {t_min:g}  '
+              f'({dr["t"].min():.1f} a {dr["t"].max():.1f}, '
+              f'{(dr["t"].max() - dr["t"].min()) * args.Omega / (2 * np.pi):.2f} periodos, '
+              f'{dr["t"].nunique()} puntos)')
 
     # El CSV de LDOS es OPCIONAL: TDNEGF propaga en el tiempo y nunca calcula
     # A(ω), asi que sus salidas no lo tienen. Los otros tres paneles si sirven
@@ -313,12 +372,17 @@ def main():
            else _pick_sites(sorted(avail)))
     print(f'  lead {lead}, sitios del CSV: {sel}   ->  en las figuras: '
           f'{[s + 1 for s in sel]}  (i = n+1)')
+    # Los heatmaps usan TODOS los sitios del CSV (el sitio es un eje, no una
+    # curva superpuesta); --sites solo recorta los paneles de curvas.
+    dr_all = dr
     dr = dr[dr['site'].isin(sel)]
+    ns = sorted(dr_all['site'].unique())
+    print(f'  heatmaps: {len(ns)} sitios, i = {ns[0] + 1}..{ns[-1] + 1}')
 
     if dl is not None:
         plot_ldos(dl[dl['site'].isin(sel)], args.outdir, lead, wmax=args.wmax)
-    plot_rho_t(dr, args.outdir, lead, Omega=args.Omega)
-    plot_spin_t(dr, args.outdir, lead, Omega=args.Omega)
+    plot_rho_map(dr_all, args.outdir, lead, Omega=args.Omega)
+    plot_spin_map(dr_all, args.outdir, lead, Omega=args.Omega)
     plot_occupation_t(dr, args.outdir, lead, Omega=args.Omega)
 
 
