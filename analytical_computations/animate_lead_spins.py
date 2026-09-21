@@ -87,15 +87,25 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     x_lo, x_hi = x[0] - 1.0, x[-1] + 1.0
 
     mag = np.linalg.norm(S, axis=2)                      # (Nt, nsite)
-    if scale_mode == 'raw':
-        V = S / max(mag.max(), 1e-300)                   # escala comun
-    else:
-        V = S / np.maximum(mag, 1e-300)[:, :, None]      # direccion unitaria
 
     # color = magnitud, en log (abarca mas de una decada con la profundidad)
     vmax = float(mag.max())
     vmin = max(float(mag[mag > 0].min()) if np.any(mag > 0) else vmax / 100,
                vmax / 1e3)
+
+    if scale_mode == 'raw':
+        V = S / max(vmax, 1e-300)                        # escala comun
+    else:
+        # Direccion unitaria, PERO solo por encima del ruido numerico. En los
+        # primeros cuadros rho(0)=0 y |<sigma>| ~ 1e-61 es basura de punto
+        # flotante: dividir por eso da una flecha de tamano completo apuntando
+        # al azar. El piso es precision de maquina RELATIVA al mayor valor de
+        # la corrida, no el vmin del colorbar: asi solo desaparecen las flechas
+        # que son ruido, y cualquier magnitud fisica por pequena que sea
+        # (sitios profundos, nodos de la oscilacion 2k_F) se dibuja normal.
+        noise = vmax * 1e-12
+        shrink = np.minimum(mag, noise) / noise
+        V = S / np.maximum(mag, 1e-300)[:, :, None] * shrink[:, :, None]
     norm = colors.LogNorm(vmin=vmin, vmax=vmax, clip=True)
     cmap = plt.get_cmap(CMAP)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
@@ -117,12 +127,15 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     ax3d.set_proj_type('ortho')
     ax3d.set_box_aspect((x_hi - x_lo, 2.2, 2.3))
     ax3d.view_init(elev=22, azim=-62)
-    ax3d.set_xlabel('Lead site $n$', labelpad=20)
+    # El CSV guarda el sitio 0-based (n=0 es la superficie, convencion del
+    # codigo Julia). Aqui se muestra 1-based y con el simbolo i, que es la
+    # notacion del paper. El relabel es solo de presentacion.
+    ax3d.set_xlabel('Lead site $i$', labelpad=20)
     ax3d.set_ylabel(r'$\langle\sigma_y\rangle$', labelpad=6)
     ax3d.set_zlabel(r'$\langle\sigma_z\rangle$', labelpad=2)
     step = max(1, nsite // 6)
     ax3d.set_xticks(x[::step])
-    ax3d.set_xticklabels([str(s) for s in sites[::step]], fontsize=9)
+    ax3d.set_xticklabels([str(s + 1) for s in sites[::step]], fontsize=9)
     ax3d.set_yticks([-1, 0, 1])
     ax3d.set_zticks([-1, 0, 1])
     unidad = 'direccion (norma 1)' if scale_mode == 'unit' else 'escala comun'
@@ -143,7 +156,7 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     quiver_holder = {'outline': None, 'fill': None}
 
     cbar = fig.colorbar(sm, cax=cax)
-    cbar.ax.set_title(r'$|\langle\boldsymbol{\sigma}\rangle_n|$', pad=10, fontsize=11)
+    cbar.ax.set_title(r'$|\langle\boldsymbol{\sigma}\rangle_i|$', pad=10, fontsize=11)
     cbar.ax.tick_params(direction='in', labelsize=9, pad=2)
 
     # --- panel de la punta del espin, plano (sigma_x, sigma_y) ------------
@@ -166,9 +179,9 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     # --- panel temporal: <sigma_x>(t) de los sitios rastreados ------------
     for c, j in zip(TRACK_COLORS, track_idx):
         axts.plot(t / T, S[:, j, 0], '-', color=c, lw=1.2,
-                  label=rf'$n={sites[j]}$')
+                  label=rf'$i={sites[j] + 1}$')
     axts.set_xlim((t / T).min(), (t / T).max())
-    _fmt2d(axts, xlabel=r'$t\, (2\pi/\Omega)$', ylabel=r'$\langle\sigma_x\rangle_n(t)$')
+    _fmt2d(axts, xlabel=r'$t\, (2\pi/\Omega)$', ylabel=r'$\langle\sigma_x\rangle_i(t)$')
     axts.ticklabel_format(style='sci', scilimits=(0, 0), axis='y')
     axts.legend(frameon=True, edgecolor='black', framealpha=0.0, fancybox=False,
                 loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0,

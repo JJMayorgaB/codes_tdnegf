@@ -18,7 +18,7 @@ const N_BLAS = parse(Int, get(ENV, "OPENBLAS_NUM_THREADS", string(Sys.CPU_THREAD
 
 # geometria
 const N_SPINS   = 1
-const N_BUF     = 20
+const N_BUF     = 21
 const Nx, Ny    = 2 * N_SPINS + 1 + 2 * N_BUF, 1     
 const Nσ, N_orb = 2, 1
 
@@ -30,8 +30,8 @@ const GROUPS = (g2 = 1:0, g3 = 1:1, g4 = 1:0)
 const DRIVEN = collect(GROUPS.g3)
 const FREE   = Int[]
 
-# Sitios del lead analitico que caben dentro de la region observable
-const N_LEAD_OUT = min(N_BUF, 20)
+
+const N_LEAD_OUT = min(N_BUF - 1, 20)
 lead_site(α::Symbol, n::Int) = α === :R ? SITE_C + 1 + n : SITE_C - 1 - n
 
 #parametros 
@@ -59,7 +59,7 @@ const t_relax = t_on_g3
 const t_final = 10000.0            
 
 # Salida: TODA la dinamica, transitorio incluido, submuestreada cada OUT_STRIDE
-const OUT_STRIDE = 10
+const OUT_STRIDE = 5      # Δt=0.1 -> Δt_out = 0.5
 
 @inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
 param_tag() = "single_gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))_buf$(N_BUF)"
