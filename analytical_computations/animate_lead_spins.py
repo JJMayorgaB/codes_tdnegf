@@ -134,9 +134,9 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     # El CSV guarda el sitio 0-based (n=0 es la superficie, convencion del
     # codigo Julia). Aqui se muestra 1-based y con el simbolo i, que es la
     # notacion del paper. El relabel es solo de presentacion.
-    ax3d.set_xlabel('Lead site $i$', labelpad=20)
-    ax3d.set_ylabel(r'$\langle\sigma^{y}_{i}\rangle$', labelpad=6)
-    ax3d.set_zlabel(r'$\langle\sigma^{z}_{i}\rangle$', labelpad=2)
+    ax3d.set_xlabel(r'Lead site $\text{i}$', labelpad=20)
+    ax3d.set_ylabel(r'$\langle\hat{\sigma}^{\text{y}}_{\text{i}}\rangle$', labelpad=6)
+    ax3d.set_zlabel(r'$\langle\hat{\sigma}^{\text{z}}_{\text{i}}\rangle$', labelpad=2)
     step = max(1, nsite // 6)
     ax3d.set_xticks(x[::step])
     ax3d.set_xticklabels([str(s + 1) for s in sites[::step]], fontsize=9)
@@ -160,15 +160,15 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     quiver_holder = {'outline': None, 'fill': None}
 
     cbar = fig.colorbar(sm, cax=cax)
-    cbar.ax.set_title(r'$|\langle\boldsymbol{\sigma}_{i}\rangle|$', pad=10, fontsize=11)
+    cbar.ax.set_title(r'$|\langle\hat{\boldsymbol{\sigma}}_{\text{i}}\rangle|$', pad=10, fontsize=11)
     cbar.ax.tick_params(direction='in', labelsize=9, pad=2)
 
     # --- panel de la punta del espin, plano (sigma_x, sigma_y) ------------
     axtip.set_aspect('equal')
     axtip.axhline(0, color='0.85', lw=0.8)
     axtip.axvline(0, color='0.85', lw=0.8)
-    _fmt2d(axtip, xlabel=r'$\langle\sigma^{x}_{i}\rangle$',
-           ylabel=r'$\langle\sigma^{y}_{i}\rangle$')
+    _fmt2d(axtip, xlabel=r'$\langle\hat{\sigma}^{\text{x}}_{\text{i}}\rangle$',
+           ylabel=r'$\langle\hat{\sigma}^{\text{y}}_{\text{i}}\rangle$')
     lim = 1.15 * float(np.abs(S[:, track_idx, :2]).max())
     axtip.set_xlim(-lim, lim)
     axtip.set_ylim(-lim, lim)
@@ -184,10 +184,10 @@ def build_figure(t, sites, S, Omega, scale_mode, lead):
     # --- panel temporal: <sigma_x>(t) de los sitios rastreados ------------
     for c, j in zip(TRACK_COLORS, track_idx):
         axts.plot(t / T, S[:, j, 0], '-', color=c, lw=1.2,
-                  label=rf'$i={sites[j] + 1}$')
+                  label=rf'$\text{{i}}={sites[j] + 1}$')
     axts.set_xlim((t / T).min(), (t / T).max())
-    _fmt2d(axts, xlabel=r'$t\, (2\pi/\Omega)$',
-           ylabel=r'$\langle\sigma^{x}_{i}\rangle(t)$')
+    _fmt2d(axts, xlabel=r'$\text{Time}\, (2\pi/\Omega)$',
+           ylabel=r'$\langle\hat{\sigma}^{\text{x}}_{\text{i}}\rangle(t)$')
     axts.ticklabel_format(style='sci', scilimits=(0, 0), axis='y')
     axts.legend(frameon=True, edgecolor='black', framealpha=0.0, fancybox=False,
                 loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0,

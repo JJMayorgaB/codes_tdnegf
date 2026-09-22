@@ -33,6 +33,11 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_LDOS_CSV = os.path.join(SCRIPT_DIR, 'output', 'floquet_ldos.csv')
 DEFAULT_RHO_CSV = os.path.join(SCRIPT_DIR, 'output', 'floquet_rho_t.csv')
 
+# Mismo criterio de color por componente que inbedding_leads_plot.py. Se repite
+# aqui en vez de importarlo para que este script siga siendo independiente; si
+# cambia uno hay que cambiar el otro.
+SPIN_COLORS = {'sx': 'blue', 'sy': 'green', 'sz': 'red'}
+
 
 def _fmt_axes(ax):
     ax.tick_params(axis='both', direction='in', bottom=True, top=True,
@@ -96,7 +101,7 @@ def plot_rho_t(df, outdir, Omega):
     ax.plot(x, im_c, ':', color='0.3', lw=1.5, zorder=2,
             label=r'$\text{Im}\,\rho^{\uparrow\downarrow}$')
 
-    ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+    ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
     ax.set_ylabel(r'$\rho(t)$')
     ax.set_xlim(x.min(), x.max())
     ax.set_ylim(top=1.1)
@@ -130,7 +135,7 @@ def plot_occupation_t(df, outdir, Omega):
     ax.plot(x, n_dn, '-', color='blue', lw=1.5, zorder=3,
             label=r'$\downarrow$')
 
-    ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+    ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
     ax.set_ylabel(r'$n(t)$')
     ax.set_xlim(x.min(), x.max())
     ax.set_ylim(0.0, 1.3)
@@ -153,13 +158,16 @@ def plot_spin_t(df, outdir, Omega):
 
     fig, ax = plt.subplots(figsize=(5, 4))
 
-    ax.plot(x, sx, '-', color='red', lw=1.5, zorder=3,  label=r'$\langle\sigma^{x}\rangle$')
-    ax.plot(x, sy, '-', color='blue', lw=1.5, zorder=3,  label=r'$\langle\sigma^{y}\rangle$')
-    ax.plot(x, sz, '-', color='black', lw=1.5, zorder=3, label=r'$\langle\sigma^{z}\rangle$')
+    ax.plot(x, sx, '-', color=SPIN_COLORS['sx'], lw=1.5, zorder=3,
+            label=r'$\langle\hat{\sigma}^{\text{x}}\rangle$')
+    ax.plot(x, sy, '-', color=SPIN_COLORS['sy'], lw=1.5, zorder=3,
+            label=r'$\langle\hat{\sigma}^{\text{y}}\rangle$')
+    ax.plot(x, sz, '-', color=SPIN_COLORS['sz'], lw=1.5, zorder=3,
+            label=r'$\langle\hat{\sigma}^{\text{z}}\rangle$')
     ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
 
-    ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
-    ax.set_ylabel(r'$\langle\boldsymbol{\sigma}\rangle(t)$')
+    ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
+    ax.set_ylabel(r'$\langle\hat{\sigma}^{\alpha}\rangle(t)$')
     ax.set_xlim(x.min(), x.max())
     ax.legend(frameon=False, loc='best')
     _fmt_axes(ax)

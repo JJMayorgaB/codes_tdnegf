@@ -39,12 +39,6 @@ lead_site(α::Symbol, n::Int) = α === :R ? SITE_C + 1 + n : SITE_C - 1 - n
 
 #parametros
 const γso   = 0.1
-# γ = sqrt(1-γso²) hace que el ancho de banda de la cadena, 2*sqrt(γ²+γso²),
-# sea exactamente 2 -- el mismo del lead. La banda del lead NO se puede ajustar:
-# sale de data/z_Semicircle_N49.txt, una tabla de polos precalculada con borde
-# fijo en |ω|=2, y el γ que recibe build_Σᴸ_nλ solo entra por ϵ_n(n,Ny), la
-# dispersion transversal, que vale cero con Ny=1. Sin esto queda un desajuste
-# de impedancia del 0.5% en los contactos.
 const γ     = sqrt(1 - γso^2)        # = 0.994987
 const E_F   = 0.0
 const β     = 40.0

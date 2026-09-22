@@ -31,7 +31,7 @@ plt.rcParams.update({
 })
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_LDOS_CSV = os.path.join(SCRIPT_DIR, 'output', 'inbedding_ldos.csv')
+# (no hay DEFAULT_LDOS_CSV: la LDOS se resuelve junto al --rho-csv, ver main)
 DEFAULT_RHO_CSV = os.path.join(SCRIPT_DIR, 'output', 'inbedding_rho_t.csv')
 
 # Prefijo de los archivos de salida. Se cambia con --prefix para no confundir
@@ -41,6 +41,11 @@ PREFIX = 'inbedding'
 # Sufijo del nombre, lo pone --t-min. Asi una figura recortada a la cola no
 # sobrescribe la de la evolucion completa.
 SUFFIX = ''
+
+# Color por componente de espin, unico para todas las figuras de curvas. Los
+# heatmaps no lo usan: ahi el color codifica el VALOR, no la componente.
+# comparison_tdnegf_floquet_plot.py lo importa de aqui para no desincronizarse.
+SPIN_COLORS = {'sx': 'blue', 'sy': 'green', 'sz': 'red'}
 
 
 def _fmt_axes(ax):
@@ -99,7 +104,9 @@ def _sci_yaxis(ax, fontsize=15):
     fmt = mticker.ScalarFormatter(useOffset=off, useMathText=True)
     fmt.set_powerlimits((0, 0))
     ax.yaxis.set_major_formatter(fmt)
-    ax.yaxis.set_offset_position('right')
+    # Posicion por defecto: arriba a la izquierda, encima de los ticks del eje
+    # y, que es la escala a la que multiplica. En los heatmaps el exponente va
+    # sobre la barra de color (ver _sci_cbar), que es otro eje.
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
 
 
@@ -169,17 +176,17 @@ def plot_rho_map(df, outdir, lead, Omega):
     """Panel 2x2: las cuatro componentes de la matriz densidad, como heatmaps."""
     T = 2 * np.pi / Omega
     fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
-    cols = [('n_up',        r'$\rho^{\uparrow\uparrow}_{i}$'),
-            ('n_dn',        r'$\rho^{\downarrow\downarrow}_{i}$'),
-            ('Re_rho_updn', r'$\text{Re}\,\rho^{\uparrow\downarrow}_{i}$'),
-            ('Im_rho_updn', r'$\text{Im}\,\rho^{\uparrow\downarrow}_{i}$')]
+    cols = [('n_up',        r'$\rho^{\uparrow\uparrow}_{\text{ii}}$'),
+            ('n_dn',        r'$\rho^{\downarrow\downarrow}_{\text{ii}}$'),
+            ('Re_rho_updn', r'$\text{Re}\,\rho^{\uparrow\downarrow}_{\text{ii}}$'),
+            ('Im_rho_updn', r'$\text{Im}\,\rho^{\uparrow\downarrow}_{\text{ii}}$')]
 
     for ax, (col, lab) in zip(axes.flat, cols):
         _heatmap(ax, df, col, lab, T)
     for ax in axes[:, 0]:
-        ax.set_ylabel(r'$i$')
+        ax.set_ylabel(r'$\text{Site i}$')
     for ax in axes[-1, :]:
-        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
     _save(fig, outdir, f'{PREFIX}_rho_map_{lead}')
 
 
@@ -193,17 +200,17 @@ def plot_spin_map(df, outdir, lead, Omega):
     """
     T = 2 * np.pi / Omega
     fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
-    cols = [('n_tot', r'$\langle\sigma^{0}_{i}\rangle$'),
-            ('sx',    r'$\langle\sigma^{x}_{i}\rangle$'),
-            ('sy',    r'$\langle\sigma^{y}_{i}\rangle$'),
-            ('sz',    r'$\langle\sigma^{z}_{i}\rangle$')]
+    cols = [('n_tot', r'$\langle\hat{\sigma}^{\text{0}}_{\text{i}}\rangle$'),
+            ('sx',    r'$\langle\hat{\sigma}^{\text{x}}_{\text{i}}\rangle$'),
+            ('sy',    r'$\langle\hat{\sigma}^{\text{y}}_{\text{i}}\rangle$'),
+            ('sz',    r'$\langle\hat{\sigma}^{\text{z}}_{\text{i}}\rangle$')]
 
     for ax, (col, lab) in zip(axes.flat, cols):
         _heatmap(ax, df, col, lab, T)
     for ax in axes[:, 0]:
-        ax.set_ylabel(r'$i$')
+        ax.set_ylabel(r'$\text{Site i}$')
     for ax in axes[-1, :]:
-        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
     _save(fig, outdir, f'{PREFIX}_spin_map_{lead}')
 
 
@@ -218,15 +225,95 @@ def _site_legend(fig, colors):
     # Los CSV guardan el sitio 0-based (convencion del codigo Julia: n=0 es la
     # superficie). En las figuras se muestra 1-based y con el simbolo i, que es
     # la notacion del paper. El relabel vive SOLO aqui, los datos no se tocan.
-    _top_legend(fig, [Line2D([], [], color=c, lw=2.0, label=rf'$i={n + 1}$')
+    _top_legend(fig, [Line2D([], [], color=c, lw=2.0, label=rf'$\text{{i}}={n + 1}$')
                       for n, c in colors.items()])
 
 
 def _top_legend(fig, handles):
     """Misma leyenda pero con handles arbitrarios (p.ej. componentes de espin)."""
     fig.legend(handles=handles, loc='lower center', bbox_to_anchor=(0.5, 0.975),
-               ncol=len(handles), frameon=False, fontsize=16,
-               handlelength=1.8, columnspacing=2.0, handletextpad=0.6)
+               ncol=len(handles), frameon=False, fontsize=18,
+               handlelength=1.8, columnspacing=1.5, handletextpad=0.6)
+
+
+def _legend_en_hueco(ax, handles, labels, pad=0.025, **kw):
+    """
+    Coloca la leyenda en la banda horizontal mas ancha que no cruza ninguna
+    curva, en vez de dejarsela a loc='best'.
+
+    loc='best' puntua solo las 9 anclas estandar (esquinas, centros de borde,
+    centro) y si todas chocan escoge la menos mala, que en estos paneles cae
+    justo encima de una curva. Aqui se prueban tres franjas verticales
+    (izquierda / centro / derecha), se recogen las y de todas las curvas que
+    pasan por esa franja, y se busca el mayor salto entre y consecutivas: ese
+    salto es, por construccion, una banda libre en TODA la franja. La leyenda
+    se centra ahi.
+    """
+    kw.setdefault('frameon', False)
+    leg = ax.legend(handles, labels, loc='lower left', **kw)
+
+    # Hay que dibujar para poder medir la caja, y hacerlo despues de
+    # tight_layout: si no, el tamano relativo de la leyenda cambia luego.
+    ax.figure.tight_layout()
+    ax.figure.canvas.draw()
+    inv = ax.transAxes.inverted()
+    bb = leg.get_window_extent().transformed(inv)
+    w, h = bb.width, bb.height
+
+    curvas = []
+    for ln in ax.get_lines():
+        xy = ln.get_xydata()
+        # <3 puntos = axhline/axvline y similares: su x no esta en transData,
+        # medirlos daria basura.
+        if not ln.get_visible() or len(xy) < 3:
+            continue
+        a = inv.transform(ax.transData.transform(xy))
+        curvas.append(a[np.isfinite(a).all(axis=1)])
+
+    mejor = None
+    for xl in (pad, 0.5 - w / 2, 1.0 - w - pad):
+        if xl < 0.0 or xl + w > 1.0:
+            continue
+        ys = [a[(a[:, 0] >= xl - pad) & (a[:, 0] <= xl + w + pad), 1]
+              for a in curvas]
+        ys = np.concatenate(ys) if ys else np.empty(0)
+        # los bordes del panel cuentan como ocupados
+        bordes = np.sort(np.concatenate([[0.0], np.clip(ys, 0.0, 1.0), [1.0]]))
+        saltos = np.diff(bordes)
+        k = int(np.argmax(saltos))
+        if mejor is None or saltos[k] > mejor[0]:
+            mejor = (saltos[k], xl, bordes[k] + (saltos[k] - h) / 2)
+
+    if mejor is not None:
+        _, xl, yb = mejor
+        leg.set_bbox_to_anchor((xl, np.clip(yb, pad, 1.0 - h - pad)),
+                               transform=ax.transAxes)
+    return leg
+
+
+def _alpha_legend(ax, fontsize=16):
+    """
+    Cajita "alpha = x, y, z" con cada letra del color de su componente.
+
+    Va como leyenda y no como ax.text para que matplotlib le busque el hueco
+    con loc='best'. handlelength=0 porque no hay simbolo que mostrar: el color
+    de la LETRA es lo que identifica la componente, asi que una linea de
+    muestra al lado seria redundante.
+    """
+    lab = [r'$\alpha=$', r'x,', r'y,', r'z']
+    col = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
+    _legend_en_hueco(ax, [Line2D([], [], ls='none') for _ in lab], lab,
+                     ncol=len(lab), fontsize=fontsize, handlelength=0.0,
+                     handletextpad=0.0, columnspacing=0.45, labelcolor=col)
+
+
+def _panel_site_legend(ax, colors, fontsize=15):
+    """Leyenda de sitios en UNA columna, dentro del panel, en loc='best'."""
+    _legend_en_hueco(ax,
+                     [Line2D([], [], color=c, lw=2.0) for c in colors.values()],
+                     [rf'$\text{{i}}={n + 1}$' for n in colors],
+                     ncol=1, fontsize=fontsize, handlelength=1.6,
+                     labelspacing=0.35, handletextpad=0.6)
 
 
 def _save(fig, outdir, name):
@@ -244,8 +331,8 @@ def plot_ldos(df, outdir, lead, wmax=None):
     colors = _site_colors(sites)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    cols = [('LDOS_up', r'$A^{\uparrow}_{i}(\omega)\ (1/\gamma)$'),
-            ('LDOS_dn', r'$A^{\downarrow}_{i}(\omega)\ (1/\gamma)$')]
+    cols = [('LDOS_up', r'$A^{\uparrow}_{\text{i}}(\omega)\ (1/\gamma)$'),
+            ('LDOS_dn', r'$A^{\downarrow}_{\text{i}}(\omega)\ (1/\gamma)$')]
 
     for ax, (col, ylab) in zip(axes, cols):
         for n in sites:
@@ -265,6 +352,72 @@ def plot_ldos(df, outdir, lead, wmax=None):
     _save(fig, outdir, f'{PREFIX}_ldos_{lead}')
 
 
+def plot_rho_t(df, outdir, lead, Omega):
+    """
+    Panel 2x2 de curvas: las cuatro componentes de la matriz densidad, con unos
+    pocos sitios superpuestos.
+
+    Complementa a plot_rho_map, no lo sustituye: el heatmap da la vista global
+    de los 20 sitios, esta da el detalle cuantitativo de unos pocos.
+    """
+    T = 2 * np.pi / Omega
+    sites = sorted(df['site'].unique())
+    colors = _site_colors(sites)
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+    cols = [('n_up',        r'$\rho^{\uparrow\uparrow}_{\text{ii}}(t)$'),
+            ('n_dn',        r'$\rho^{\downarrow\downarrow}_{\text{ii}}(t)$'),
+            ('Re_rho_updn', r'$\text{Re}\,\rho^{\uparrow\downarrow}_{\text{ii}}(t)$'),
+            ('Im_rho_updn', r'$\text{Im}\,\rho^{\uparrow\downarrow}_{\text{ii}}(t)$')]
+
+    for ax, (col, ylab) in zip(axes.flat, cols):
+        for n in sites:
+            s = df[df['site'] == n].sort_values('t')
+            x = s['t'].to_numpy() / T
+            ax.plot(x, s[col].to_numpy(), '-', color=colors[n], lw=1.4, zorder=3)
+        ax.set_ylabel(ylab)
+        ax.set_xlim(x.min(), x.max())
+        _fmt_axes(ax)
+        _sci_yaxis(ax)
+
+    for ax in axes[-1, :]:
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
+    _panel_site_legend(axes[0, 0], colors)
+    _save(fig, outdir, f'{PREFIX}_rho_t_{lead}')
+
+
+def plot_spin_t(df, outdir, lead, Omega):
+    """Panel 2x2 de curvas: un sitio por panel, las tres componentes de espin."""
+    T = 2 * np.pi / Omega
+    sites = sorted(df['site'].unique())[:4]
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+    comps = [('sx', SPIN_COLORS['sx'], r'$\langle\hat{\sigma}^{\text{x}}_{\text{i}}\rangle$'),
+             ('sy', SPIN_COLORS['sy'], r'$\langle\hat{\sigma}^{\text{y}}_{\text{i}}\rangle$'),
+             ('sz', SPIN_COLORS['sz'], r'$\langle\hat{\sigma}^{\text{z}}_{\text{i}}\rangle$')]
+
+    for ax, n in zip(axes.flat, sites):
+        s = df[df['site'] == n].sort_values('t')
+        x = s['t'].to_numpy() / T
+        for col, color, _ in comps:
+            ax.plot(x, s[col].to_numpy(), '-', color=color, lw=1.5, zorder=3)
+        ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+        ax.set_title(rf'$\text{{i}}={n + 1}$', fontsize=18)
+        ax.set_xlim(x.min(), x.max())
+        _fmt_axes(ax)
+        _sci_yaxis(ax)
+
+    for ax in axes.flat[len(sites):]:          # si hay menos de 4 sitios
+        ax.set_visible(False)
+    for ax in axes[:, 0]:
+        ax.set_ylabel(r'$\langle\hat{\sigma}^{\alpha}_{\text{i}}\rangle(t)$')
+    for ax in axes[-1, :]:
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
+
+    _alpha_legend(axes[0, 0])
+    _save(fig, outdir, f'{PREFIX}_spin_t_{lead}')
+
+
 def plot_occupation_t(df, outdir, lead, Omega):
     """Panel 1x2: ocupacion de espin up y de espin down, lado a lado."""
     T = 2 * np.pi / Omega
@@ -272,15 +425,15 @@ def plot_occupation_t(df, outdir, lead, Omega):
     colors = _site_colors(sites)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    cols = [('n_up', r'$n^{\uparrow}_{i}(t)$'),
-            ('n_dn', r'$n^{\downarrow}_{i}(t)$')]
+    cols = [('n_up', r'$n^{\uparrow}_{\text{i}}(t)$'),
+            ('n_dn', r'$n^{\downarrow}_{\text{i}}(t)$')]
 
     for ax, (col, ylab) in zip(axes, cols):
         for n in sites:
             s = df[df['site'] == n].sort_values('t')
             x = s['t'].to_numpy() / T
             ax.plot(x, s[col].to_numpy(), '-', color=colors[n], lw=1.4, zorder=3)
-        ax.set_xlabel(r'$t\, (2\pi/\Omega)$')
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
         ax.set_ylabel(ylab)
         ax.set_xlim(x.min(), x.max())
         #ax.set_ylim(0.0, 1.0)
@@ -296,7 +449,13 @@ def plot_occupation_t(df, outdir, lead, Omega):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--ldos-csv', default=DEFAULT_LDOS_CSV)
+    ap.add_argument('--ldos-csv', default=None,
+                    help='CSV de LDOS. Por defecto se busca junto al --rho-csv, como '
+                         '<dir>/<prefix>_ldos.csv, y si no existe se omite el panel. '
+                         'OJO: no hay fallback a una ruta fija. Antes lo habia y apuntaba '
+                         'al analitico, asi que correr con --prefix tdnegf producia un '
+                         'tdnegf_ldos_*.jpg que era la LDOS analitica mal etiquetada. '
+                         'TDNEGF propaga en el tiempo y nunca calcula A(omega).')
     ap.add_argument('--rho-csv', default=DEFAULT_RHO_CSV)
     ap.add_argument('--outdir', default=os.path.join(SCRIPT_DIR, 'output'))
     ap.add_argument('--wmax', type=float, default=None,
@@ -355,14 +514,21 @@ def main():
     # El CSV de LDOS es OPCIONAL: TDNEGF propaga en el tiempo y nunca calcula
     # A(ω), asi que sus salidas no lo tienen. Los otros tres paneles si sirven
     # igual para el analitico y para TDNEGF.
+    # La LDOS se busca JUNTO al rho-csv y con el mismo prefijo, nunca en una
+    # ruta fija: si no, una corrida de TDNEGF se lleva la LDOS del analitico.
+    ldos_csv = args.ldos_csv
+    if ldos_csv is None:
+        ldos_csv = os.path.join(os.path.dirname(os.path.abspath(args.rho_csv)),
+                                f'{PREFIX}_ldos.csv')
+
     dl = None
-    if os.path.exists(args.ldos_csv):
-        df_ldos = pd.read_csv(args.ldos_csv)
+    if os.path.exists(ldos_csv):
+        df_ldos = pd.read_csv(ldos_csv)
         dl = df_ldos[df_ldos['lead'] == lead]
         if dl.empty:
             dl = None
     else:
-        print(f'  (sin {os.path.basename(args.ldos_csv)}: me salto el panel de LDOS)')
+        print(f'  (sin {os.path.basename(ldos_csv)}: me salto el panel de LDOS)')
 
     # El CSV puede traer muchos sitios; los paneles solo aguantan unos pocos.
     avail = set(dr['site'].unique())
@@ -381,6 +547,10 @@ def main():
 
     if dl is not None:
         plot_ldos(dl[dl['site'].isin(sel)], args.outdir, lead, wmax=args.wmax)
+    # Curvas (pocos sitios, detalle) Y heatmaps (todos los sitios, vista
+    # global). Son complementarios, se generan siempre los dos.
+    plot_rho_t(dr, args.outdir, lead, Omega=args.Omega)
+    plot_spin_t(dr, args.outdir, lead, Omega=args.Omega)
     plot_rho_map(dr_all, args.outdir, lead, Omega=args.Omega)
     plot_spin_map(dr_all, args.outdir, lead, Omega=args.Omega)
     plot_occupation_t(dr, args.outdir, lead, Omega=args.Omega)
