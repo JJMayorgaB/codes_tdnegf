@@ -258,8 +258,45 @@ def _legend_en_hueco(ax, handles, labels, pad=0.025, xpad=0.06, **kw):
     ax.figure.canvas.draw()
     inv = ax.transAxes.inverted()
     bb = leg.get_window_extent().transformed(inv)
-    w, h = bb.width, bb.height
+    xl, yb = _hueco_libre(ax, bb.width, bb.height, pad, xpad)
+    leg.set_bbox_to_anchor((xl, yb), transform=ax.transAxes)
+    return leg
 
+
+def _legend_doble_en_hueco(ax, sup, inf, pad=0.025, xpad=0.06, sep=0.012):
+    """
+    Dos leyendas APILADAS, colocadas como un solo bloque en el hueco libre.
+
+    Una legend de matplotlib se llena por columnas, asi que no admite 4
+    entradas en la fila de arriba y 2 en la de abajo. Con dos legends si, pero
+    hay que medir el bloque completo antes de buscarle sitio: si se colocan por
+    separado cada una se va a un hueco distinto.
+
+    sup / inf son tuplas (handles, labels, kwargs).
+    """
+    l1 = ax.legend(sup[0], sup[1], loc='lower left', frameon=False, **sup[2])
+    ax.add_artist(l1)                      # si no, la segunda legend la borra
+    l2 = ax.legend(inf[0], inf[1], loc='lower left', frameon=False, **inf[2])
+
+    ax.figure.tight_layout()
+    ax.figure.canvas.draw()
+    inv = ax.transAxes.inverted()
+    b1 = l1.get_window_extent().transformed(inv)
+    b2 = l2.get_window_extent().transformed(inv)
+
+    xl, yb = _hueco_libre(ax, max(b1.width, b2.width),
+                          b1.height + b2.height + sep, pad, xpad)
+    l2.set_bbox_to_anchor((xl, yb), transform=ax.transAxes)
+    l1.set_bbox_to_anchor((xl, yb + b2.height + sep), transform=ax.transAxes)
+    return l1, l2
+
+
+def _hueco_libre(ax, w, h, pad=0.025, xpad=0.06):
+    """
+    Esquina inferior izquierda del mayor hueco libre de curvas para una caja
+    de w x h (en fraccion de ejes). Ver _legend_en_hueco para el criterio.
+    """
+    inv = ax.transAxes.inverted()
     curvas = []
     for ln in ax.get_lines():
         xy = ln.get_xydata()
@@ -288,11 +325,10 @@ def _legend_en_hueco(ax, handles, labels, pad=0.025, xpad=0.06, **kw):
         if mejor is None or saltos[k] > mejor[0]:
             mejor = (saltos[k], xl, bordes[k] + (saltos[k] - h) / 2)
 
-    if mejor is not None:
-        _, xl, yb = mejor
-        leg.set_bbox_to_anchor((xl, np.clip(yb, pad, 1.0 - h - pad)),
-                               transform=ax.transAxes)
-    return leg
+    if mejor is None:                       # la caja no cabe en ninguna franja
+        return xpad, max(pad, 1.0 - h - pad)
+    _, xl, yb = mejor
+    return xl, float(np.clip(yb, pad, max(pad, 1.0 - h - pad)))
 
 
 def _alpha_legend(ax, fontsize=20):

@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""
-Superpone el analitico de Floquet con TDNEGF en los ultimos N periodos.
-
-Analitico -> linea SOLIDA, TDNEGF -> linea DASHED, mismo color y mismos ejes,
-asi que donde coinciden se ve una sola curva con el trazo discontinuo encima.
-
-ALINEACION DE FASE: los dos barridos arrancan en tiempos absolutos distintos
-(el analitico cubre [0, 3T], TDNEGF llega hasta 20T), pero el estado
-estacionario de Floquet es periodico, asi que basta restar a cada uno un numero
-ENTERO de periodos para que las fases del driving coincidan. Si se restara un
-numero fraccionario las curvas saldrian desfasadas aunque la fisica fuera la
-misma. El corte se toma en t_max - N*T y el origen en floor(t_corte/T).
-
-El estilo (rcParams, ejes, colores, notacion cientifica, leyenda) se reutiliza
-de inbedding_leads_plot para que las figuras salgan identicas a las demas.
-"""
 
 import argparse
 import os
@@ -28,15 +12,13 @@ from matplotlib.lines import Line2D
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
-# El import trae los rcParams ya configurados (es efecto de nivel de modulo).
-from inbedding_leads_plot import (          # noqa: E402
-    _fmt_axes, _sci_yaxis, _site_colors, _pick_sites, _top_legend, SPIN_COLORS,
+from inbedding_leads_plot import (          
+    _fmt_axes, _sci_yaxis, _site_colors, _pick_sites, _legend_en_hueco,
+    _legend_doble_en_hueco, SPIN_COLORS,
 )
 
 DEFAULT_FLOQUET_CSV = os.path.join(SCRIPT_DIR, 'output', 'inbedding_rho_t.csv')
 
-# Gris para las entradas de leyenda que solo indican el estilo de linea: el
-# color ya esta gastado en el sitio (o en la componente de espin).
 STYLE_COLOR = '0.25'
 
 
@@ -64,10 +46,6 @@ def _window(df, lead, Omega, nper, etiqueta):
     if d.empty:
         raise SystemExit(f'no quedan datos con t >= {t_cut} en {etiqueta}')
 
-    # El origen se ancla al PRIMER tiempo que queda, no a t_cut: t_cut sale de
-    # t_max - nper*T y t_max no cae exacto sobre un multiplo de T (TDNEGF para
-    # en 25132.1, no en 20T=25132.74), asi que su floor se iba un periodo.
-    # Cualquier entero preserva la fase del driving; este ademas deja x>=0.
     n0 = np.floor(d['t'].min() / T)
     d['x'] = d['t'] / T - n0
 
@@ -97,14 +75,20 @@ def plot_par(ax, da, dt, site, col, color, nper, por_periodo):
     x, y = _curva(da, site, col)
     ax.plot(x, y, '-', color=color, lw=1.8, zorder=3)
     x, y = _curva(dt, site, col)
-    ax.plot(x, y, 'o', color=color, ms=4.0, mec='white', mew=0.5,
+    ax.plot(x, y, 'o', color=color, ms=5.0, mec='white', mew=0.5,
             ls='none', markevery=_every(len(x), nper, por_periodo), zorder=6)
 
 
-def _legend_estilos():
-    return [Line2D([], [], color=STYLE_COLOR, lw=2.0, ls='-', label='Floquet'),
+def _handles_estilo():
+    """Los dos handles que distinguen Floquet (linea) de TDNEGF (circulos)."""
+    return [Line2D([], [], color=STYLE_COLOR, lw=2.0, ls='-'),
             Line2D([], [], color=STYLE_COLOR, ls='none', marker='o', ms=7.0,
-                   mec='white', mew=0.5, label='TDNEGF')]
+                   mec='white', mew=0.5)]
+
+
+def _vacio(n):
+    """Entradas invisibles para cuadrar el reparto por columnas de la legend."""
+    return [Line2D([], [], ls='none') for _ in range(n)], [' '] * n
 
 
 def plot_rho_cmp(da, dt, outdir, lead, sites, nper, por_periodo):
@@ -128,9 +112,18 @@ def plot_rho_cmp(da, dt, outdir, lead, sites, nper, por_periodo):
     for ax in axes[-1, :]:
         ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
 
-    _top_legend(fig, [Line2D([], [], color=c, lw=2.0,
-                             label=rf'$\text{{i}}={n + 1}$')
-                      for n, c in colors.items()] + _legend_estilos())
+    # Dos columnas: sitios a la izquierda, estilo de linea a la derecha. La
+    # legend reparte por columnas en bloques iguales, asi que con 4 sitios y 2
+    # estilos hay que rellenar con dos entradas vacias para que el corte caiga
+    # en 4+4 y no en 3+3.
+    hv, lv = _vacio(len(colors) - 2)
+    _legend_en_hueco(
+        axes[0, 0],
+        [Line2D([], [], color=c, lw=2.0) for c in colors.values()]
+        + _handles_estilo() + hv,
+        [rf'$\text{{i}}={n + 1}$' for n in colors] + ['Floquet', 'TDNEGF'] + lv,
+        ncol=2, fontsize=15, handlelength=1.6, labelspacing=0.35,
+        handletextpad=0.6, columnspacing=1.4)
     _save(fig, outdir, f'cmp_rho_t_{lead}')
 
 
@@ -159,8 +152,18 @@ def plot_spin_cmp(da, dt, outdir, lead, sites, nper, por_periodo):
     for ax in axes[-1, :]:
         ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
 
-    _top_legend(fig, [Line2D([], [], color=c, lw=2.0, label=lab)
-                      for _, c, lab in comps] + _legend_estilos())
+    # Bloque de dos filas:   alpha = x, y, z
+    #                        - Floquet   . TDNEGF
+    lab_a = [r'$\alpha=$', r'x,', r'y,', r'z']
+    col_a = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
+    _legend_doble_en_hueco(
+        axes[0, 0],
+        ([Line2D([], [], ls='none') for _ in lab_a], lab_a,
+         dict(ncol=4, fontsize=20, handlelength=0.0, handletextpad=0.0,
+              columnspacing=0.45, labelcolor=col_a)),
+        (_handles_estilo(), ['Floquet', 'TDNEGF'],
+         dict(ncol=2, fontsize=16, handlelength=1.6, handletextpad=0.6,
+              columnspacing=1.4)))
     _save(fig, outdir, f'cmp_spin_t_{lead}')
 
 
