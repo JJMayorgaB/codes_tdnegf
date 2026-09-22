@@ -22,29 +22,32 @@ g00_lead(ω::Real, p::FloquetParams; η::Real) = Σr(ω, p; η = η) / (2 * γ_b
 u_lead(ω::Real, p::FloquetParams; η::Real) = γ_band(p)^2 * g00_lead(ω, p; η = η)^2
 
 """
-    g_lead_r(ω, n, m, lead, p; η): Componentes de la GF retardada del lead aislado
-    G_{nn} = G₀₀ Σ_{p=0}^{n} uᵖ        
-    G_{n0} = (T̂†)ⁿ G₀₀ⁿ⁺¹
-    G_{0m} = T̂ᵐ  G₀₀ᵐ⁺¹
+    g_lead_r(ω, n, m, lead, p; η): componente (n,m) general de la GF retardada
+    del lead aislado,
+        g_nm = (T̂†)^{n-m} g₀₀^{n-m+1} Σ_{p=0}^{m} uᵖ      (n > m)
+        g_nm =  T̂^{m-n}  g₀₀^{m-n+1} Σ_{p=0}^{n} uᵖ      (m ≥ n)
+    con u = γ² g₀₀². Casos particulares (los que habia antes):
+        g_nn = g₀₀ Σ_{p=0}^{n} uᵖ,   g_n0 = (T̂†)ⁿ g₀₀ⁿ⁺¹,   g_0m = T̂ᵐ g₀₀ᵐ⁺¹
+    Para el lead izquierdo T̂† ↔ T̂ (ver T_depth).
 """
 function g_lead_r(ω::Real, n::Int, m::Int, lead::Symbol, p::FloquetParams; η::Real)
+    (n < 0 || m < 0) && error("g_lead_r: indices de sitio negativos ($n,$m)")
     a = g00_lead(ω, p; η = η)
     Tin_deep, Tout_deep = T_depth(lead, p)
-    if n == m
-        u   = u_lead(ω, p; η = η)
-        acc = one(ComplexF64)
-        s   = zero(ComplexF64)
-        for _ in 0:n
-            s += acc
-            acc *= u
-        end
+    u   = u_lead(ω, p; η = η)
+    acc = one(ComplexF64)
+    s   = zero(ComplexF64)
+    for _ in 0:min(n, m)
+        s += acc
+        acc *= u
+    end
+    d = n - m
+    if d == 0
         return (a * s) * σ0
-    elseif m == 0
-        return Tin_deep^n * (a^(n + 1) * σ0)
-    elseif n == 0
-        return Tout_deep^m * (a^(m + 1) * σ0)
+    elseif d > 0
+        return Tin_deep^d * (a^(d + 1) * s * σ0)
     else
-        error("g_lead_r: solo (n,n), (n,0) y (0,m); se pidio ($n,$m)")
+        return Tout_deep^(-d) * (a^(1 - d) * s * σ0)
     end
 end
 
