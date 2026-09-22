@@ -764,8 +764,11 @@ function main(argv = ARGS)
             end
         end
         res = fetch.(tasks)
-        st  = reduce((x, y) -> max.(x, y), first.(res))
-        stats_by_pair[(I, J)] = st
+        # OJO: no llamar `st` a esto. Un nombre asignado aqui Y dentro de la
+        # tarea de arriba lo comparten todas las tareas (Julia lo captura), y
+        # las estadisticas se pisan entre hilos. χ no se afecta, solo los chequeos.
+        stp = reduce((x, y) -> max.(x, y), first.(res))
+        stats_by_pair[(I, J)] = stp
         shortcut[(I, J)] = (maximum(r[2] for r in res), maximum(r[3] for r in res))
         for (q, (μ, ν)) in enumerate(mns)
             write_npy(joinpath(outdir, "time_kernel_$(μ)$(ν)_$(tagS)_i$(I)_j$(J).npy"), χ[:, :, q])
