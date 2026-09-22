@@ -641,7 +641,8 @@ function main(argv = ARGS)
         lg("   AVISO: dω > η/2, los lorentzianos de ancho η quedan submuestreados")
     dω * τmax > π && lg("   AVISO: dω·τmax > π, e^{-iωτ} submuestreada en ω a τ grandes")
 
-    TP  = tpowers(lead, p, maximum(sites))
+    # potencias hasta max(sitio, 12): las validaciones 1-3 recorren n,m ≤ 12
+    TP  = tpowers(lead, p, max(maximum(sites), 12))
     Tio = Tuple(M2.(T_inout(lead, p)))
 
     validations(p, lead, hpairs, sites, sidx, K, TP, Tio; η = η, lg = lg)
