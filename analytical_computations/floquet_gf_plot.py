@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+from matplotlib.lines import Line2D
 
 HAS_LATEX = shutil.which('latex') is not None
 
@@ -158,18 +159,23 @@ def plot_spin_t(df, outdir, Omega):
 
     fig, ax = plt.subplots(figsize=(5, 4))
 
-    ax.plot(x, sx, '-', color=SPIN_COLORS['sx'], lw=1.5, zorder=3,
-            label=r'$\langle\hat{\sigma}^{\text{x}}\rangle$')
-    ax.plot(x, sy, '-', color=SPIN_COLORS['sy'], lw=1.5, zorder=3,
-            label=r'$\langle\hat{\sigma}^{\text{y}}\rangle$')
-    ax.plot(x, sz, '-', color=SPIN_COLORS['sz'], lw=1.5, zorder=3,
-            label=r'$\langle\hat{\sigma}^{\text{z}}\rangle$')
+    ax.plot(x, sx, '-', color=SPIN_COLORS['sx'], lw=1.5, zorder=3)
+    ax.plot(x, sy, '-', color=SPIN_COLORS['sy'], lw=1.5, zorder=3)
+    ax.plot(x, sz, '-', color=SPIN_COLORS['sz'], lw=1.5, zorder=3)
     ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
 
     ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
     ax.set_ylabel(r'$\langle\hat{\sigma}^{\alpha}\rangle(t)$')
     ax.set_xlim(x.min(), x.max())
-    ax.legend(frameon=False, loc='best')
+    # Misma cajita "alpha = x, y, z" que en los 2x2 de inbedding_leads_plot,
+    # pero a 16 (el default de legend.fontsize): este panel es (5,4), no un
+    # cuadrante, y a 20 se comeria la figura. handlelength=0 porque el color
+    # de la LETRA es lo que identifica la componente.
+    lab = [r'$\alpha=$', r'x,', r'y,', r'z']
+    col = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
+    ax.legend([Line2D([], [], ls='none') for _ in lab], lab,
+              loc='best', frameon=False, ncol=len(lab), handlelength=0.0,
+              handletextpad=0.0, columnspacing=0.45, labelcolor=col)
     _fmt_axes(ax)
 
     plt.tight_layout()

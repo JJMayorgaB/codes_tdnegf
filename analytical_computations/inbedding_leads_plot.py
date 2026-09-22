@@ -236,7 +236,7 @@ def _top_legend(fig, handles):
                handlelength=1.8, columnspacing=1.5, handletextpad=0.6)
 
 
-def _legend_en_hueco(ax, handles, labels, pad=0.025, **kw):
+def _legend_en_hueco(ax, handles, labels, pad=0.025, xpad=0.06, **kw):
     """
     Coloca la leyenda en la banda horizontal mas ancha que no cruza ninguna
     curva, en vez de dejarsela a loc='best'.
@@ -270,8 +270,12 @@ def _legend_en_hueco(ax, handles, labels, pad=0.025, **kw):
         a = inv.transform(ax.transData.transform(xy))
         curvas.append(a[np.isfinite(a).all(axis=1)])
 
+    # xpad > pad a proposito: pad es el margen con que se mide si una curva
+    # estorba, xpad es cuanto se separa la leyenda del marco. Pegada al spine
+    # derecho se lee mal, y ahi no hay etiquetas de eje que den aire como en
+    # el lado izquierdo.
     mejor = None
-    for xl in (pad, 0.5 - w / 2, 1.0 - w - pad):
+    for xl in (xpad, 0.5 - w / 2, 1.0 - w - xpad):
         if xl < 0.0 or xl + w > 1.0:
             continue
         ys = [a[(a[:, 0] >= xl - pad) & (a[:, 0] <= xl + w + pad), 1]
@@ -291,7 +295,7 @@ def _legend_en_hueco(ax, handles, labels, pad=0.025, **kw):
     return leg
 
 
-def _alpha_legend(ax, fontsize=16):
+def _alpha_legend(ax, fontsize=20):
     """
     Cajita "alpha = x, y, z" con cada letra del color de su componente.
 
