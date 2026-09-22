@@ -35,7 +35,8 @@ sys.path.insert(0, SCRIPT_DIR)
 # importarlo tambien fija los rcParams comunes a todas las figuras
 from inbedding_leads_plot import _fmt_axes, _sci_cbar    # noqa: E402
 
-DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'time_kernel')
+DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'time_kernel', 'data')      # .npy del cluster
+DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'time_kernel', 'figures')   # figuras
 COMPS = ('x', 'y', 'z')
 PANEL = (5.0, 4.0)                  # tamano de cada panel individual
 
@@ -68,36 +69,81 @@ def _titulo(parte, mu, nu):
             r'}}_{\text{ij}}(t,t^{\prime})$')
 
 
+def _barra_global(fig, ax, im, vmax, titulo):
+    """
+    Titulo de la figura y barra de color comun, dentro del triangulo vacio
+    (t' > t) del panel (1,1), en la esquina superior izquierda:
+        titulo alineado a la izquierda, arriba
+        barra horizontal debajo, tambien a la izquierda, con el multiplicador
+        x10^p justo al final de la barra
+    Todo queda con x < y (coordenadas del panel), o sea sin tocar los datos.
+    """
+    ax.text(0.04, 0.975, titulo, transform=ax.transAxes, ha='left', va='top',
+            fontsize=22)
+    cax = ax.inset_axes([0.04, 0.70, 0.38, 0.07])
+    cb = fig.colorbar(im, cax=cax, orientation='horizontal')
+    # matplotlib rasteriza la barra (>= 50 niveles); en pdf/svg eso abre un
+    # lienzo del tamano de la figura entera. Como vector pesa poco.
+    cb.solids.set_rasterized(False)
+    p = int(np.floor(np.log10(vmax)))
+    cb.locator = mticker.MaxNLocator(nbins=4, symmetric=True)
+    cb.formatter = mticker.FuncFormatter(lambda v, _: '$' + f'{v / 10.0 ** p:.3g}' + '$')
+    cb.update_ticks()
+    cax.xaxis.set_ticks_position('top')
+    cax.tick_params(labelsize=17, direction='in', length=5)
+    cax.text(1.04, 0.5, r'$\times 10^{' + f'{p}' + r'}$', transform=cax.transAxes,
+             ha='left', va='center', fontsize=17)
+
+
 def plot_parte(data, t, labels, mu, nu, parte, outdir, tag):
     """Una figura n x n para Re o Im."""
     n = len(labels)
+    # ejes compartidos: toda la malla usa la misma ventana (t,t'), asi que los
+    # numeros de los ticks solo van en la columna izquierda y la fila de abajo
     fig, axes = plt.subplots(n, n, figsize=(PANEL[0] * n, PANEL[1] * n),
-                             squeeze=False)
+                             squeeze=False, sharex=True, sharey=True)
     f = np.real if parte == 'Re' else np.imag
+
+    # UNA escala de color para los n x n paneles, para poder comparar amplitudes
+    vmax = max(np.abs(f(Z)).max() for Z in data.values())
+    if not np.isfinite(vmax) or vmax == 0.0:
+        vmax = 1.0
 
     for r, j in enumerate(labels):
         for c, i in enumerate(labels):
             ax = axes[r, c]
             Z = f(data[(i, j)])                  # Z[a,b] = chi(t_a, t'_b)
-            vmax = np.abs(Z).max()
-            if not np.isfinite(vmax) or vmax == 0.0:
-                vmax = 1.0
-            # pcolormesh espera C[y,x]: y = t' (indice b), x = t (indice a)
-            im = ax.pcolormesh(t, t, Z.T, shading='nearest', cmap='seismic',  vmin=-vmax, vmax=vmax, rasterized=True)
-            ax.set_title(r'$(\text{i},\text{j})=(' + f'{i},{j}' + r')$',  fontsize=18, pad=6, loc='left')
+            # imshow en vez de pcolormesh: la malla es uniforme, asi que es lo
+            # mismo que shading='nearest', pero entra al pdf/svg como UNA imagen
+            # de 601x601. pcolormesh rasterizado le pide al backend mixto un
+            # lienzo del tamano de toda la figura por panel y se queda sin RAM.
+            # C[y,x]: y = t' (indice b), x = t (indice a) -> Z.T; origin='lower'.
+            h = 0.5 * (t[1] - t[0])
+            im = ax.imshow(Z.T, origin='lower', aspect='auto', interpolation='nearest',
+                           extent=(t[0] - h, t[-1] + h, t[0] - h, t[-1] + h),
+                           cmap='seismic', vmin=-vmax, vmax=vmax)
+            # i encabeza las columnas (arriba) y j las filas (a la izquierda,
+            # girada 90 grados), en vez de un titulo (i,j) por panel
+            if r == 0:
+                ax.set_title(r'$\text{i}=' + f'{i}' + r'$', fontsize=22, pad=12)
+            if c == 0:
+                ax.text(-0.25, 0.5, r'$\text{j}=' + f'{j}' + r'$', transform=ax.transAxes,
+                        rotation=90, ha='center', va='center', fontsize=22)
             ax.set_xlim(t[0], t[-1])
             ax.set_ylim(t[0], t[-1])
-            ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=4))
-            ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=4))
+            # ticks enteros solo si la ventana abarca varios periodos (zoom: no)
+            entero = t[-1] >= 2
+            ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=entero, nbins=4))
+            ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=entero, nbins=4))
             _fmt_axes(ax)
             ax.set_axisbelow(False)              # ticks por encima del mapa
-            _sci_cbar(fig.colorbar(im, ax=ax, pad=0.025, fraction=0.046))
             if r == n - 1:
-                ax.set_xlabel(r'$\text{Time}\ t\ (2\pi/\Omega)$')
+                ax.set_xlabel(r'$\text{Time t}\ (2\pi/\Omega)$')
             if c == 0:
-                ax.set_ylabel(r'$\text{Time}\ t^{\prime}\ (2\pi/\Omega)$')
+                ax.set_ylabel(r'$\text{Time t}^{\prime}\ (2\pi/\Omega)$')
+            ax.label_outer()                     # ticks quedan, numeros solo afuera
 
-    fig.suptitle(_titulo(parte, mu, nu), fontsize=26, y=1.0)
+    _barra_global(fig, axes[0, 0], im, vmax, _titulo(parte, mu, nu))
     _save(fig, outdir, f'time_kernel_{mu}{nu}_{tag}_{parte}')
 
 
@@ -136,22 +182,27 @@ def main():
                     help='las 9 combinaciones (mu,nu) que existan en --indir')
     ap.add_argument('--sites', default='1,2,3,4')
     ap.add_argument('--indir', default=DEFAULT_DIR)
-    ap.add_argument('--outdir', default=None, help='por defecto = --indir')
+    ap.add_argument('--outdir', default=DEFAULT_FIG)
     args = ap.parse_args()
 
     labels = [int(s) for s in args.sites.split(',')]
-    outdir = args.outdir or args.indir
+    tag = '-'.join(str(s) for s in labels)
+    # cada conjunto de sitios en su subcarpeta: <data>/<tag>/ y <figures>/<tag>/
+    indir = args.indir
+    if os.path.isdir(os.path.join(indir, tag)):
+        indir = os.path.join(indir, tag)
+    outdir = os.path.join(args.outdir, tag)
     os.makedirs(outdir, exist_ok=True)
+    print(f'  datos:   {indir}\n  figuras: {outdir}')
 
     if args.all:
         if args.files:
             raise SystemExit('--all no admite archivos explicitos')
-        tag = '-'.join(str(s) for s in labels)
         hechos = 0
         for mu in COMPS:
             for nu in COMPS:
-                if all(os.path.isfile(q) for q in _paths(args.indir, mu, nu, labels, tag)):
-                    plot_mn(mu, nu, labels, args.indir, outdir)
+                if all(os.path.isfile(q) for q in _paths(indir, mu, nu, labels, tag)):
+                    plot_mn(mu, nu, labels, indir, outdir)
                     hechos += 1
                 else:
                     print(f'  (sin datos completos para {mu}{nu}, lo salto)')
@@ -159,7 +210,7 @@ def main():
     else:
         if args.mu is None or args.nu is None:
             raise SystemExit('hace falta --mu y --nu, o --all')
-        plot_mn(args.mu, args.nu, labels, args.indir, outdir, args.files or None)
+        plot_mn(args.mu, args.nu, labels, indir, outdir, args.files or None)
 
 
 if __name__ == '__main__':
