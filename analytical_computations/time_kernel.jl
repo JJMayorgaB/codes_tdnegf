@@ -511,7 +511,8 @@ julia -t NHILOS time_kernel.jl [opciones]
   --periods 3          ventana (t,t') ∈ [0, P·T]²
   --Nt 601             puntos por eje de tiempo
   --kmax 4             armonico maximo |k|; se usa N = kmax + 2
-  --eta auto           ensanchamiento; auto = 0.1/(P·T)
+  --eta 2.65e-6        ensanchamiento (defecto: el de la corrida validada η6b;
+                       auto = 0.01/(P·T))
   --Nomega auto        puntos en ω; auto = dω = η/2
   --omega-min -15 --omega-max 15   malla uniforme fina (dω = η/2) en todo el intervalo
   --tail free|none     free: resta g^r_ij(ω) y suma su FT exacta (defecto)
@@ -602,7 +603,10 @@ function main(argv = ARGS)
     Nτ      = 2Nt - 1
     τs      = [(it - Nt) * dt for it in 1:Nτ]           # τ = t_a - t'_b, it = a - b + Nt
 
-    η  = get(o, "eta", "auto") == "auto" ? 0.1 / τmax : parse(Float64, o["eta"])
+    # defecto = corrida validada "η6b": η = 2.65e-6, dω = η/2 (Nω auto), ω ∈ ±15.
+    # η·τmax = 0.01 (≈2 % de amortiguamiento en χ a τ = 3T) y aliasing ~e^{-4π}.
+    ηarg = get(o, "eta", "2.65e-6")
+    η  = ηarg == "auto" ? 0.01 / τmax : parse(Float64, ηarg)
     ωmin = getf("omega-min", -15.0); ωmax = getf("omega-max", 15.0)
     tailmode = get(o, "tail", "free")
     tailmode in ("free", "none") || error("--tail debe ser free o none")
