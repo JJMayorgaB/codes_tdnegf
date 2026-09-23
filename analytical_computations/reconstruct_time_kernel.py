@@ -22,9 +22,12 @@ Uso:
     # ventana completa [0,3T], promediada por bloques (vista general)
     python reconstruct_time_kernel.py --all --sites 1,2,3,4
     python reconstruct_time_kernel.py --all --sites 1,7,13,20 --t0 0.5    # arranca a mitad de periodo
+    # solo triangulo inferior, sin la franja |t-t'| < 3 (cola lejos de la diagonal)
+    python reconstruct_time_kernel.py --mu x --nu x --sites 1,2,3,4 --window 60 --tau-min 3
 """
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -42,7 +45,7 @@ DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'full', 'ma
 COMPS = ('x', 'y', 'z')
 
 
-def reconstruir(A, tau, Omega, t, f=1, filas=256):
+def reconstruir(A, tau, Omega, t, f=1, filas=256, parte=None):
     """
     A[tau, k+2, i_idx, j_idx] (k = -2..2)  ->  chi[(c, r)] con chi[a, b] = chi(t_a, t'_b).
     t es la malla (t_a = t'_a) con el mismo paso que tau.
@@ -52,6 +55,9 @@ def reconstruir(A, tau, Omega, t, f=1, filas=256):
     malla fina punto a punto seria volver a submuestrear (aliasing); el
     promedio por bloques muestra el contenido de baja frecuencia sin inventar
     patrones. Se calcula por tandas de filas para no llenar la memoria.
+
+    parte = 'Re' o 'Im': guarda solo esa parte en float32 (4x menos RAM que
+    complex128); es lo que usa main para graficar. None: complejo completo.
     """
     dtau = tau[1] - tau[0]
     i0 = int(np.argmin(np.abs(tau)))
@@ -70,13 +76,15 @@ def reconstruir(A, tau, Omega, t, f=1, filas=256):
     for c in range(n):
         for r in range(n):
             Akr = A[:, :, c, r]
-            Z = np.empty((Nb, Nb), complex)
+            Z = np.empty((Nb, Nb), complex if parte is None else np.float32)
             for a0 in range(0, N, filas):
                 a = np.arange(a0, min(a0 + filas, N))
                 idx = i0 + a[:, None] - np.arange(N)[None, :]
                 blk = np.einsum('abk,ak->ab', Akr[idx], E[a])  # (len(a), N)
                 if f > 1:
                     blk = blk.reshape(len(a) // f, f, Nb, f).mean(axis=(1, 3))
+                if parte is not None:
+                    blk = blk.real if parte == 'Re' else blk.imag
                 Z[a0 // f:(a0 + len(a)) // f] = blk
             out[(c, r)] = Z
     return out
@@ -97,10 +105,18 @@ def main():
                          'para quedar <= este numero (defecto 1500, ~ pixeles del panel)')
     ap.add_argument('--dpi', type=int, default=300,
                     help='dpi de las figuras (600 para ventanas de ~1T sin promediar)')
+    ap.add_argument('--tau-min', type=float, default=None,
+                    help="oculta la franja |t - t'| < tau_min y el triangulo t' > t; la escala de "
+                         "color se calcula solo con lo que queda (para ver la cola lejos de la diagonal)")
+    ap.add_argument('--formats', default='jpg,svg,pdf',
+                    help='formatos de salida separados por coma (p.ej. jpg para los mapas de 1T a 600 dpi)')
+    ap.add_argument('--skip-existing', action='store_true',
+                    help='salta las (mu,nu) cuyas figuras Re e Im ya existen (para retomar)')
     ap.add_argument('--t0', type=float, default=0.0,
                     help='inicio de la ventana, en periodos del drive (defecto 0)')
     args = ap.parse_args()
     plot_time_kernel.DPI = args.dpi
+    plot_time_kernel.FORMATS = tuple(args.formats.split(','))
 
     labels = [int(s) for s in args.sites.split(',')]
     tag = '-'.join(str(s) for s in labels)
@@ -136,12 +152,22 @@ def main():
         if not os.path.isfile(fn):
             print(f'  (no hay {os.path.basename(fn)}, lo salto)')
             continue
-        R = reconstruir(np.load(fn), tau, Omega, t, f)
-        data = {(labels[c], labels[r]): v for (c, r), v in R.items()}
-        print(f'  chi^{mu}{nu}: max|Re| = {max(np.abs(v.real).max() for v in data.values()):.3e}'
-              f'   max|Im| = {max(np.abs(v.imag).max() for v in data.values()):.3e}')
-        for parte in ('Re', 'Im'):
+        if args.skip_existing and all(os.path.isfile(os.path.join(outdir, f'time_kernel_{mu}{nu}_{tag}_{p}.{e}'))
+                                      for p in ('Re', 'Im') for e in plot_time_kernel.FORMATS):
+            print(f'  chi^{mu}{nu}: figuras ya existen, lo salto')
+            continue
+        A = np.load(fn)
+        for parte in ('Re', 'Im'):                 # una parte a la vez (float32): menos RAM
+            R = reconstruir(A, tau, Omega, t, f, parte=parte)
+            if args.tau_min is not None:           # solo t - t' >= tau_min
+                oculto = (tb[:, None] - tb[None, :]) < args.tau_min
+                for v in R.values():
+                    v[oculto] = np.nan
+            data = {(labels[c], labels[r]): v for (c, r), v in R.items()}
+            print(f'  chi^{mu}{nu}: max|{parte}| = {max(np.nanmax(np.abs(v)) for v in data.values()):.3e}')
             plot_parte(data, tb / T, labels, mu, nu, parte, outdir, tag)
+            del R, data                            # liberar antes de la siguiente figura
+            gc.collect()
 
 
 if __name__ == '__main__':

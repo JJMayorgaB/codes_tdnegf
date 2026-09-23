@@ -21,6 +21,8 @@ import os
 import sys
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')        # sin ventana Qt: solo guardar (evita que se acumule memoria)
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.lines import Line2D

@@ -26,6 +26,8 @@ import os
 import sys
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')        # sin ventana Qt: solo guardar (evita que se acumule memoria)
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
@@ -40,11 +42,13 @@ DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'time_kernel', 'figures')   # f
 COMPS = ('x', 'y', 'z')
 PANEL = (5.0, 4.0)                  # tamano de cada panel individual
 DPI = 300                           # reconstruct_time_kernel.py lo sube para ventanas largas
+FORMATS = ('jpg', 'svg', 'pdf')   # reconstruct_time_kernel.py --formats lo cambia
+_CMAP = plt.get_cmap('seismic').with_extremes(bad='white')   # nan (zona oculta) en blanco
 
 
 def _save(fig, outdir, name):
     fig.tight_layout()
-    for ext in ('jpg', 'svg', 'pdf'):
+    for ext in FORMATS:
         path = os.path.join(outdir, f'{name}.{ext}')
         fig.savefig(path, bbox_inches='tight', dpi=DPI)
         print(f'  -> {path}')
@@ -106,14 +110,17 @@ def plot_parte(data, t, labels, mu, nu, parte, outdir, tag):
     f = np.real if parte == 'Re' else np.imag
 
     # UNA escala de color para los n x n paneles, para poder comparar amplitudes
-    vmax = max(np.abs(f(Z)).max() for Z in data.values())
+    vmax = max(np.nanmax(np.abs(f(Z) if np.iscomplexobj(Z) else Z)) for Z in data.values())   # nan = zona oculta
     if not np.isfinite(vmax) or vmax == 0.0:
         vmax = 1.0
 
     for r, j in enumerate(labels):
         for c, i in enumerate(labels):
             ax = axes[r, c]
-            Z = f(data[(i, j)])                  # Z[a,b] = chi(t_a, t'_b)
+            Z = data[(i, j)]
+            if np.iscomplexobj(Z):
+                Z = f(Z)
+            Z = np.asarray(Z, np.float32)        # Z[a,b] = chi(t_a, t'_b); float32 ahorra RAM
             # imshow en vez de pcolormesh: la malla es uniforme, asi que es lo
             # mismo que shading='nearest', pero entra al pdf/svg como UNA imagen
             # de 601x601. pcolormesh rasterizado le pide al backend mixto un
@@ -122,7 +129,7 @@ def plot_parte(data, t, labels, mu, nu, parte, outdir, tag):
             h = 0.5 * (t[1] - t[0])
             im = ax.imshow(Z.T, origin='lower', aspect='auto', interpolation='nearest',
                            extent=(t[0] - h, t[-1] + h, t[0] - h, t[-1] + h),
-                           cmap='seismic', vmin=-vmax, vmax=vmax)
+                           cmap=_CMAP, vmin=-vmax, vmax=vmax)
             # i encabeza las columnas (arriba) y j las filas (a la izquierda,
             # girada 90 grados), en vez de un titulo (i,j) por panel
             if r == 0:
