@@ -29,7 +29,7 @@ Uso:
 Salida (en --outdir):
   kh_{μ}{ν}_{sitios}.npy     χ_k complejo, forma (Nτ, 5, n, n):
                              [τ, k+3 (k=-2..2), indice de i, indice de j]
-  kh_{sitios}_tau.npy        malla τ ≥ 0
+  kh_{sitios}_tau.npy        malla τ ∈ [-τmax, τmax] (se guarda τ<0 tambien)
   kh_{sitios}_meta.json      parametros y convenciones
   kh_{sitios}_checks.txt     chequeos
   harmonics_{hash}.npy/.txt  cache de los armonicos de G (misma que time_kernel)
@@ -315,21 +315,21 @@ function kh_main(argv = ARGS)
     lg("  causal τ<0: χ_k(τ<0) deberia ser ~0;  χ_{-k} = χ_k* porque χ(t,t') es real")
     lg("="^78)
 
-    # salida: τ ≥ 0, k = -2..2
+    # salida: malla τ COMPLETA (τ < 0 incluido: no se impone causalidad al guardar), k = -2..2
     n = length(labels)
     ks = (KK + 1 - 2):(KK + 1 + 2)
     for (q, (μ, ν)) in enumerate(mns)
-        A = zeros(ComplexF64, nτ + 1, 5, n, n)
+        A = zeros(ComplexF64, Nτ, 5, n, n)
         for (c, I) in enumerate(labels), (r, J) in enumerate(labels)
-            A[:, :, c, r] = ch[(I, J)][i0:end, ks, q]
+            A[:, :, c, r] = ch[(I, J)][:, ks, q]
         end
         write_npy(joinpath(outdir, "kh_$(μ)$(ν)_$(tagS).npy"), A)
     end
-    write_npy(joinpath(outdir, "kh_$(tagS)_tau.npy"), collect(τs[i0:end]))
+    write_npy(joinpath(outdir, "kh_$(tagS)_tau.npy"), collect(τs))
     meta = [
-        "sites" => labels, "lead" => lead, "dtau" => dτ, "taumax" => nτ * dτ, "ntau" => nτ + 1,
+        "sites" => labels, "lead" => lead, "dtau" => dτ, "taumax" => nτ * dτ, "ntau" => Nτ,
         "Omega" => p.Ω, "k" => collect(-2:2), "kmax_G" => K, "N_floquet" => p.N,
-        "index_convention" => "A[tau, k+3, i_idx, j_idx]; chi(t,t') = sum_k exp(-i k Omega t) chi_k(t-t')",
+        "index_convention" => "A[tau, k+3, i_idx, j_idx], tau in [-taumax, taumax]; chi(t,t') = sum_k exp(-i k Omega t) chi_k(t-t')",
         "eta" => η, "Nomega" => Nω, "omega_min" => ωmin, "omega_max" => ωmax, "tail" => tailmode,
         "lambda" => p.λ, "t_hop" => p.t, "J_sd" => p.J_sd, "theta_deg" => rad2deg(p.θ),
         "E_F" => p.μ, "beta" => p.β, "mu_nu" => [μ * ν for (μ, ν) in mns],

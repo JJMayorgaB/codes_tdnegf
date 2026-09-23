@@ -5,8 +5,8 @@ calculados por kernel_harmonics.jl.
 
 Para cada (mu,nu) salen DOS figuras n x n en el espacio (i,j), con la misma
 estructura que las de plot_time_kernel.py (i por columnas, j por filas):
-    kh_tau_{mu}{nu}_{sitios}_Re     Re chi_k(tau)
-    kh_omega_{mu}{nu}_{sitios}_Re   Re chi_k(omega),  chi_k(omega) = int_0 dtau e^{i omega tau} chi_k(tau)
+    kh_tau_{mu}{nu}_{sitios}_{Re,Im}     Re / Im chi_k(tau)
+    kh_omega_{mu}{nu}_{sitios}_{Re,Im}   Re / Im chi_k(omega),  chi_k(omega) = int_0 dtau e^{i omega tau} chi_k(tau)
 En cada panel van los 5 armonicos k = 0, +-1, +-2: mismo color para k y -k,
 k en linea solida y -k en linea punteada.
 
@@ -90,7 +90,7 @@ def _malla(x, y, labels, xlabel, ylabel, titulo, fname, outdir, muestras):
     _save(fig, outdir, fname)
 
 
-def _transformada(tau, X, nw=1201):
+def _transformada(tau, X, nw=4001):
     """chi_k(omega) = int_0^taumax dtau e^{i omega tau} chi_k(tau), trapecio,
     en omega in [-pi/dtau, pi/dtau] (frecuencia maxima sin aliasing)."""
     dtau = tau[1] - tau[0]
@@ -101,26 +101,30 @@ def _transformada(tau, X, nw=1201):
     return om, Y
 
 
-def plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau):
+def plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, tau_win=None):
     f = os.path.join(indir, f'kh_{mu}{nu}_{tag}.npy')
     if not os.path.isfile(f):
         print(f'  (no hay {os.path.basename(f)}, lo salto)')
         return False
     A = np.load(f)                                  # (ntau, 5, n, n)
-    muestras = len(tau) < MARKERS_BAJO
+    pos = tau >= 0                                  # se grafica tau >= 0 (tau < 0 ~ 0 por causalidad)
+    A, tau = A[pos], tau[pos]
     comp = r'\text{' + mu + nu + r'}'
-    Yt = np.moveaxis(A, 1, 0).real                  # (5, ntau, n, n)
-    _malla(tau, Yt, labels, r'$\text{Time}\ \tau$',
-           r'$\text{Re}\,\chi_{k}(\tau)$',
-           r'$\text{Re}\,\chi^{' + comp + r'}_{\text{ij},k}(\tau)$' +
-           rf'$\quad (d\tau={meta["dtau"]:.3g})$',
-           f'kh_tau_{mu}{nu}_{tag}_Re', outdir, muestras)
+    dt_lab = rf'$\quad (d\tau={meta["dtau"]:.3g})$'
+    # la transformada usa TODA la malla; --tau-window solo recorta lo que se dibuja en tau
     om, Yw = _transformada(tau, A)
-    _malla(om, Yw.real, labels, r'$\text{Frequency}\ \omega$',
-           r'$\text{Re}\,\chi_{k}(\omega)$',
-           r'$\text{Re}\,\chi^{' + comp + r'}_{\text{ij},k}(\omega)$' +
-           rf'$\quad (d\tau={meta["dtau"]:.3g})$',
-           f'kh_omega_{mu}{nu}_{tag}_Re', outdir, False)
+    tv = tau <= tau_win if tau_win is not None else slice(None)
+    muestras = len(tau[tv]) < MARKERS_BAJO
+    Yt = np.moveaxis(A[tv], 1, 0)                   # (5, ntau, n, n)
+    for parte, f_ in (('Re', np.real), ('Im', np.imag)):
+        _malla(tau[tv], f_(Yt), labels, r'$\text{Time}\ \tau$',
+               r'$\text{' + parte + r'}\,\chi_{k}(\tau)$',
+               r'$\text{' + parte + r'}\,\chi^{' + comp + r'}_{\text{ij},k}(\tau)$' + dt_lab,
+               f'kh_tau_{mu}{nu}_{tag}_{parte}', outdir, muestras)
+        _malla(om, f_(Yw), labels, r'$\text{Frequency}\ \omega$',
+               r'$\text{' + parte + r'}\,\chi_{k}(\omega)$',
+               r'$\text{' + parte + r'}\,\chi^{' + comp + r'}_{\text{ij},k}(\omega)$' + dt_lab,
+               f'kh_omega_{mu}{nu}_{tag}_{parte}', outdir, False)
     return True
 
 
@@ -132,6 +136,8 @@ def main():
     ap.add_argument('--sites', default='1,2,3,4')
     ap.add_argument('--indir', default=DEFAULT_DIR)
     ap.add_argument('--outdir', default=DEFAULT_FIG)
+    ap.add_argument('--tau-window', type=float, default=None,
+                    help='dibujar solo tau <= este valor en las figuras en tau (la transformada usa todo)')
     args = ap.parse_args()
 
     labels = [int(s) for s in args.sites.split(',')]
@@ -148,13 +154,13 @@ def main():
     tau = np.load(os.path.join(indir, f'kh_{tag}_tau.npy'))
 
     if args.all:
-        hechos = sum(plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau)
+        hechos = sum(plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, args.tau_window)
                      for mu in COMPS for nu in COMPS)
         print(f'{hechos} combinaciones (mu,nu) graficadas')
     else:
         if args.mu is None or args.nu is None:
             raise SystemExit('hace falta --mu y --nu, o --all')
-        plot_mn(args.mu, args.nu, labels, indir, outdir, tag, meta, tau)
+        plot_mn(args.mu, args.nu, labels, indir, outdir, tag, meta, tau, args.tau_window)
 
 
 if __name__ == '__main__':

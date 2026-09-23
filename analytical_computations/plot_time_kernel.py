@@ -39,13 +39,14 @@ DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'time_kernel', 'data')      # .
 DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'time_kernel', 'figures')   # figuras
 COMPS = ('x', 'y', 'z')
 PANEL = (5.0, 4.0)                  # tamano de cada panel individual
+DPI = 300                           # reconstruct_time_kernel.py lo sube para ventanas largas
 
 
 def _save(fig, outdir, name):
     fig.tight_layout()
     for ext in ('jpg', 'svg', 'pdf'):
         path = os.path.join(outdir, f'{name}.{ext}')
-        fig.savefig(path, bbox_inches='tight', dpi=300)
+        fig.savefig(path, bbox_inches='tight', dpi=DPI)
         print(f'  -> {path}')
     plt.close(fig)
 
@@ -127,7 +128,8 @@ def plot_parte(data, t, labels, mu, nu, parte, outdir, tag):
             if r == 0:
                 ax.set_title(r'$\text{i}=' + f'{i}' + r'$', fontsize=22, pad=12)
             if c == 0:
-                ax.text(-0.25, 0.5, r'$\text{j}=' + f'{j}' + r'$', transform=ax.transAxes,
+                # con ticks decimales (ventanas < 2T) el rotulo j se corre mas a la izquierda
+                ax.text(-0.25 if t[-1] >= 2 else -0.42, 0.5, r'$\text{j}=' + f'{j}' + r'$', transform=ax.transAxes,
                         rotation=90, ha='center', va='center', fontsize=22)
             ax.set_xlim(t[0], t[-1])
             ax.set_ylim(t[0], t[-1])
