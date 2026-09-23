@@ -28,11 +28,11 @@ Uso:
 
 Salida (en --outdir):
   kh_{μ}{ν}_{sitios}.npy     χ_k complejo, forma (Nτ, 5, n, n):
-                             [τ, k+3 (k=-2..2), indice de i, indice de j]
+                             [τ, k+2 (k=-2..2, indices de numpy), indice de i, indice de j]
   kh_{sitios}_tau.npy        malla τ ∈ [-τmax, τmax] (se guarda τ<0 tambien)
   kh_{sitios}_meta.json      parametros y convenciones
   kh_{sitios}_checks.txt     chequeos
-  harmonics_{hash}.npy/.txt  cache de los armonicos de G (misma que time_kernel)
+  harmonics_{hash}.npy/.txt  cache de los armonicos de G (formato de time_kernel; no se comparte, la clave incluye dtau)
 =#
 
 include(joinpath(@__DIR__, "time_kernel.jl"))    # trae M2, build_harmonics, validaciones, E/S
@@ -207,6 +207,7 @@ function kh_main(argv = ARGS)
     all(>=(1), labels) || error("--sites: las etiquetas empiezan en 1")
     tagS = join(labels, "-")
     lead = Symbol(get(o, "lead", "R"))
+    lead in (:L, :R) || error("--lead debe ser L o R")      # T_depth trata cualquier otro como L
     pairs = [(I, J) for J in labels for I in labels]
     hl = unique(vcat(pairs, [(J, I) for (I, J) in pairs]))
     hpairs = [(I - 1, J - 1) for (I, J) in hl]
@@ -215,6 +216,8 @@ function kh_main(argv = ARGS)
     sidx = Dict(n => q for (q, n) in enumerate(sites))
     comps = ["x", "y", "z"]
     mns = if haskey(o, "mu") || haskey(o, "nu")
+        (haskey(o, "mu") && haskey(o, "nu")) || error("--mu y --nu van juntos")
+        (o["mu"] in comps && o["nu"] in comps) || error("--mu/--nu deben ser x, y o z")
         [(o["mu"], o["nu"])]
     else
         [(μ, ν) for μ in comps for ν in comps]
@@ -241,6 +244,7 @@ function kh_main(argv = ARGS)
     dω   = ωs[2] - ωs[1]
     wts  = fill(dω, Nω); wts[1] = wts[end] = dω / 2
     tailmode = get(o, "tail", "free")
+    tailmode in ("free", "none") || error("--tail debe ser free o none")
     chunk  = geti("chunk", 4096)
     outdir = get(o, "outdir", joinpath(@__DIR__, "output", "kernel_harmonics"))
     mkpath(outdir)
@@ -260,6 +264,9 @@ function kh_main(argv = ARGS)
     lg(@sprintf("ω ∈ [%.1f, %.1f]  Nω = %d  dω = %.3e  η = %.3e  (η·τmax = %.3f)  cola: %s",
                 ωmin, ωmax, Nω, dω, η, η * nτ * dτ, tailmode))
     dω > η / 2 * (1 + 1e-9) && lg("   AVISO: dω > η/2")
+    ωχ = 4γ_band(p) + 2p.J_sd + 4p.Ω                # frecuencia maxima de χ_k(τ)
+    π / dτ < ωχ && lg(@sprintf("   AVISO: π/dτ = %.3f < %.3f: χ_k(τ) queda con ALIASING; use dτ < %.3f",
+                               π / dτ, ωχ, π / ωχ))
 
     TP  = tpowers(lead, p, max(maximum(sites), 12))
     Tio = Tuple(M2.(T_inout(lead, p)))
@@ -329,7 +336,7 @@ function kh_main(argv = ARGS)
     meta = [
         "sites" => labels, "lead" => lead, "dtau" => dτ, "taumax" => nτ * dτ, "ntau" => Nτ,
         "Omega" => p.Ω, "k" => collect(-2:2), "kmax_G" => K, "N_floquet" => p.N,
-        "index_convention" => "A[tau, k+3, i_idx, j_idx], tau in [-taumax, taumax]; chi(t,t') = sum_k exp(-i k Omega t) chi_k(t-t')",
+        "index_convention" => "numpy (0-based): A[tau, k+2, i_idx, j_idx], k = -2..2, tau in [-taumax, taumax]; chi(t,t') = sum_k exp(-i k Omega t) chi_k(t-t')",
         "eta" => η, "Nomega" => Nω, "omega_min" => ωmin, "omega_max" => ωmax, "tail" => tailmode,
         "lambda" => p.λ, "t_hop" => p.t, "J_sd" => p.J_sd, "theta_deg" => rad2deg(p.θ),
         "E_F" => p.μ, "beta" => p.β, "mu_nu" => [μ * ν for (μ, ν) in mns],

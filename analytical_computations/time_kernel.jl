@@ -644,6 +644,11 @@ function main(argv = ARGS)
     dω > η / 2 * (1 + 1e-9) &&
         lg("   AVISO: dω > η/2, los lorentzianos de ancho η quedan submuestreados")
     dω * τmax > π && lg("   AVISO: dω·τmax > π, e^{-iωτ} submuestreada en ω a τ grandes")
+    # χ oscila hasta ω ≈ 4γ (interferencia entre bordes de banda) + J_sd + Ω's:
+    # con π/dt por debajo de eso la malla (t,t') tiene aliasing (rayas falsas).
+    ωχ = 4γ_band(p) + 2p.J_sd + 4p.Ω
+    π / dt < ωχ && lg(@sprintf("   AVISO: π/dt = %.3f < %.3f (frecuencia maxima de χ): la malla (t,t') tiene ALIASING; use Nt ≥ %d",
+                              π / dt, ωχ, ceil(Int, τmax * ωχ / π) + 1))
 
     # potencias hasta max(sitio, 12): las validaciones 1-3 recorren n,m ≤ 12
     TP  = tpowers(lead, p, max(maximum(sites), 12))
