@@ -170,11 +170,12 @@ julia -t NHILOS kernel_harmonics.jl [opciones]
   --outdir DIR         por defecto output/kernel_harmonics
   --no-cache
   --lambda --Jsd --theta(grados) --Omega --EF --beta
-  --verify DIR         compara contra los .npy de time_kernel.jl en DIR (usa su cache)
+  --soc-axis y|z       eje del Rashba en los leads (defecto y); z = cono paralelo al SOC
+  --verify DIR        compara contra los .npy de time_kernel.jl en DIR (usa su cache)
 """
 const KH_VALKEYS = Set(["sites", "lead", "mu", "nu", "dtau", "taumax", "kmax", "eta", "Nomega",
                         "omega-min", "omega-max", "tail", "chunk", "outdir", "lambda", "Jsd",
-                        "theta", "Omega", "EF", "beta", "verify"])
+                        "theta", "Omega", "EF", "beta", "verify", "soc-axis"])
 const KH_FLAGKEYS = Set(["no-cache", "help"])
 
 function kh_parse(argv)
@@ -208,6 +209,8 @@ function kh_main(argv = ARGS)
     tagS = join(labels, "-")
     lead = Symbol(get(o, "lead", "R"))
     lead in (:L, :R) || error("--lead debe ser L o R")      # T_depth trata cualquier otro como L
+    SOC_AXIS[] = get(o, "soc-axis", "y")                    # antes de cualquier T_hop
+    SOC_AXIS[] in ("y", "z") || error("--soc-axis debe ser y o z")
     pairs = [(I, J) for J in labels for I in labels]
     hl = unique(vcat(pairs, [(J, I) for (I, J) in pairs]))
     hpairs = [(I - 1, J - 1) for (I, J) in hl]
@@ -255,8 +258,8 @@ function kh_main(argv = ARGS)
     lg("="^78)
     lg("KERNEL HARMONICS  χ^{μν}_{ij,k}(τ)")
     lg("="^78)
-    lg(@sprintf("t=%.4f λ=%.4f J_sd=%.3f θ=%.2f° Ω=%.4f E_F=%.3f β=%.1f", p.t, p.λ, p.J_sd,
-                rad2deg(p.θ), p.Ω, p.μ, p.β))
+    lg(@sprintf("t=%.4f λ=%.4f J_sd=%.3f θ=%.2f° Ω=%.4f E_F=%.3f β=%.1f  SOC σ_%s", p.t, p.λ, p.J_sd,
+                rad2deg(p.θ), p.Ω, p.μ, p.β, SOC_AXIS[]))
     lg(@sprintf("lead %s  sitios %s   kmax(G) = %d -> N = %d, χ hasta |k| = %d", lead,
                 string(labels), K, p.N, 2K))
     lg(@sprintf("τ ∈ [0, %.2f]  dτ = %.4f  (%d puntos, malla simetrica de %d)", nτ * dτ, dτ, nτ + 1, Nτ))
@@ -272,7 +275,7 @@ function kh_main(argv = ARGS)
     Tio = Tuple(M2.(T_inout(lead, p)))
     validations(p, lead, hpairs, sites, sidx, K, TP, Tio; η = η, lg = lg)
 
-    pstr = join(["kh", "lead=$lead", "hpairs=$hpairs", "lambda=$(p.λ)", "t=$(p.t)",
+    pstr = join(["kh", "lead=$lead", "hpairs=$hpairs", "lambda=$(p.λ)", "soc=$(SOC_AXIS[])", "t=$(p.t)",
                  "Jsd=$(p.J_sd)", "theta=$(p.θ)", "Omega=$(p.Ω)", "mu=$(p.μ)", "beta=$(p.β)",
                  "N=$(p.N)", "K=$K", "eta=$η", "Nomega=$Nω", "wmin=$ωmin", "wmax=$ωmax",
                  "dtau=$dτ", "ntau=$nτ", "tail=$tailmode"], ";")
@@ -340,6 +343,7 @@ function kh_main(argv = ARGS)
         "eta" => η, "Nomega" => Nω, "omega_min" => ωmin, "omega_max" => ωmax, "tail" => tailmode,
         "lambda" => p.λ, "t_hop" => p.t, "J_sd" => p.J_sd, "theta_deg" => rad2deg(p.θ),
         "E_F" => p.μ, "beta" => p.β, "mu_nu" => [μ * ν for (μ, ν) in mns],
+        "soc_axis" => SOC_AXIS[],
     ]
     write_json(joinpath(outdir, "kh_$(tagS)_meta.json"), meta)
     open(joinpath(outdir, "kh_$(tagS)_checks.txt"), "w") do io

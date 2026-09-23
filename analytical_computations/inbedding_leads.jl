@@ -4,7 +4,11 @@ include(joinpath(@__DIR__, "floquet_gf.jl"))
 
 #geometria
 #T̂ = -t σ̂₀ - iλ σ̂_y = -γ exp(i θ_R σ̂_y)
-T_hop(p::FloquetParams) = -p.t * σ0 - im * p.λ * σy
+#Eje del SOC: "y" (defecto, T̂ = -tσ₀ - iλσ_y) o "z" (T̂ = -tσ₀ - iλσ_z).
+#Con "z" y el cono en z, equivale por una rotacion global de espin (x→x, y→z,
+#z→-y) al cono alrededor del eje del SOC con Rashba σ_y. Lo fija --soc-axis.
+const SOC_AXIS = Ref("y")
+T_hop(p::FloquetParams) = -p.t * σ0 - im * p.λ * (SOC_AXIS[] == "z" ? σz : σy)
 θ_R(p::FloquetParams)   = atan(p.λ, p.t)
 
 function T_inout(lead::Symbol, p::FloquetParams)
