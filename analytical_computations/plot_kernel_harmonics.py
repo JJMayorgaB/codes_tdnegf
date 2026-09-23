@@ -31,8 +31,8 @@ sys.path.insert(0, SCRIPT_DIR)
 # importarlo tambien fija los rcParams comunes a todas las figuras
 from inbedding_leads_plot import _fmt_axes, _sci_yaxis    # noqa: E402
 
-DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'data')
-DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'figures')
+DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'full', 'data_200')
+DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'full', 'figures_harmonics')
 COMPS = ('x', 'y', 'z')
 PANEL = (5.0, 4.0)
 KCOL = {0: 'black', 1: 'tab:blue', 2: 'tab:red'}     # color por |k|
@@ -101,7 +101,7 @@ def _transformada(tau, X, nw=4001):
     return om, Y
 
 
-def plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, tau_win=None):
+def plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, tau_win=None, om_win=None):
     f = os.path.join(indir, f'kh_{mu}{nu}_{tag}.npy')
     if not os.path.isfile(f):
         print(f'  (no hay {os.path.basename(f)}, lo salto)')
@@ -113,6 +113,9 @@ def plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, tau_win=None):
     dt_lab = rf'$\quad (d\tau={meta["dtau"]:.3g})$'
     # la transformada usa TODA la malla; --tau-window solo recorta lo que se dibuja en tau
     om, Yw = _transformada(tau, A)
+    if om_win is not None:                          # solo recorta lo que se dibuja en omega
+        ow = np.abs(om) <= om_win
+        om, Yw = om[ow], Yw[:, ow]
     tv = tau <= tau_win if tau_win is not None else slice(None)
     muestras = len(tau[tv]) < MARKERS_BAJO
     Yt = np.moveaxis(A[tv], 1, 0)                   # (5, ntau, n, n)
@@ -138,6 +141,8 @@ def main():
     ap.add_argument('--outdir', default=DEFAULT_FIG)
     ap.add_argument('--tau-window', type=float, default=None,
                     help='dibujar solo tau <= este valor en las figuras en tau (la transformada usa todo)')
+    ap.add_argument('--omega-window', type=float, default=None,
+                    help='dibujar solo |omega| <= este valor (por defecto hasta pi/dtau)')
     args = ap.parse_args()
 
     labels = [int(s) for s in args.sites.split(',')]
@@ -154,13 +159,13 @@ def main():
     tau = np.load(os.path.join(indir, f'kh_{tag}_tau.npy'))
 
     if args.all:
-        hechos = sum(plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, args.tau_window)
+        hechos = sum(plot_mn(mu, nu, labels, indir, outdir, tag, meta, tau, args.tau_window, args.omega_window)
                      for mu in COMPS for nu in COMPS)
         print(f'{hechos} combinaciones (mu,nu) graficadas')
     else:
         if args.mu is None or args.nu is None:
             raise SystemExit('hace falta --mu y --nu, o --all')
-        plot_mn(args.mu, args.nu, labels, indir, outdir, tag, meta, tau, args.tau_window)
+        plot_mn(args.mu, args.nu, labels, indir, outdir, tag, meta, tau, args.tau_window, args.omega_window)
 
 
 if __name__ == '__main__':

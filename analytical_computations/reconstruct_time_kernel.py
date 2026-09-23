@@ -37,8 +37,8 @@ sys.path.insert(0, SCRIPT_DIR)
 import plot_time_kernel                    # noqa: E402
 from plot_time_kernel import plot_parte    # noqa: E402  (mismo formato de figura)
 
-DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'data_dt0.5')
-DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'time_kernel', 'figures_kh')
+DEFAULT_DIR = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'full', 'data_3T')
+DEFAULT_FIG = os.path.join(SCRIPT_DIR, 'output', 'kernel_harmonics', 'full', 'maps_3T_avg')
 COMPS = ('x', 'y', 'z')
 
 
