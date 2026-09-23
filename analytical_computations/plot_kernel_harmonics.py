@@ -11,7 +11,7 @@ En cada panel van los 5 armonicos k = 0, +-1, +-2: mismo color para k y -k,
 k en linea solida y -k en linea punteada.
 
 Uso:
-    python plot_kernel_harmonics.py --all --sites 1,2,3,4 --indir output\\kernel_harmonics\\data_dt0.5
+    python plot_kernel_harmonics.py --all --sites 1,2,3,4 --indir output\\kernel_harmonics\\full\\data_200
     python plot_kernel_harmonics.py --mu x --nu x --sites 1,2,3,4
 """
 
