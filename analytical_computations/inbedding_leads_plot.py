@@ -487,6 +487,71 @@ def plot_occupation_t(df, outdir, lead, Omega):
     _save(fig, outdir, f'{PREFIX}_occ_t_{lead}')
 
 
+_ENT = ('uu', 'ud', 'du', 'dd')
+_PAULI = (np.array([[0, 1], [1, 0]], complex),
+          np.array([[0, -1j], [1j, 0]], complex),
+          np.array([[1, 0], [0, -1]], complex))
+
+
+def _bloques(df, pref, blk):
+    """(N, 2, 2) complejo desde las columnas Re/Im_<pref>_<blk>_<ss> del CSV."""
+    z = np.stack([df[f'Re_{pref}_{blk}_{s}'].to_numpy() + 1j * df[f'Im_{pref}_{blk}_{s}'].to_numpy()
+                  for s in _ENT], axis=-1)
+    return z.reshape(-1, 2, 2)
+
+
+def bond_currents(dfb, dfh, lead, n, m):
+    """
+    Corrientes del enlace i -> j con i = n, j = m (indices del CSV, i = n+1 en las
+    figuras), tal cual la definicion
+        I_{i->j}(t)        = -i Tr_s{ H_ij rho^ij - H_ji rho^ji }
+        I^{S_a}_{i->j}(t)  = -i Tr_s{ sigma^a [ H_ij rho^ij - H_ji rho^ji ] }
+    con rho^ij = <c_i^dag c_j>. Los CSV guardan rho_nm = <c_m^dag c_n> (convencion
+    de TDNEGF y de -iG^<), asi que rho^ij = rho_mn y rho^ji = rho_nm.
+    Devuelve t, I, I^S (N, 3) y el maximo |Im| relativo (debe ser ~0).
+    """
+    b = dfb[(dfb['lead'] == lead) & (dfb['n'] == n) & (dfb['m'] == m)].sort_values('t')
+    if b.empty:
+        raise SystemExit(f'no hay el enlace ({n},{m}) del lead {lead} en el CSV de enlaces')
+    h = dfh[(dfh['lead'] == lead) & (dfh['n'] == n) & (dfh['m'] == m)]
+    if h.empty:
+        raise SystemExit(f'no hay el hopping del enlace ({n},{m}) del lead {lead}')
+    rho_ij, rho_ji = _bloques(b, 'rho', 'mn'), _bloques(b, 'rho', 'nm')
+    H_ij, H_ji = _bloques(h, 'H', 'nm')[0], _bloques(h, 'H', 'mn')[0]
+    X = np.einsum('ab,tbc->tac', H_ij, rho_ij) - np.einsum('ab,tbc->tac', H_ji, rho_ji)
+    I = -1j * np.einsum('taa->t', X)
+    IS = np.stack([-1j * np.einsum('ab,tba->t', s, X) for s in _PAULI], axis=-1)
+    esc = max(np.abs(I.real).max(), np.abs(IS.real).max(), 1e-300)
+    im = max(np.abs(I.imag).max(), np.abs(IS.imag).max()) / esc
+    return b['t'].to_numpy(), I.real, IS.real, im
+
+
+def plot_current_t(t, I, IS, outdir, lead, Omega):
+    """Panel 1x2: corriente de carga y las tres corrientes de espin del enlace."""
+    T = 2 * np.pi / Omega
+    x = t / T
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    ax = axes[0]
+    ax.plot(x, I, '-', color='black', lw=1.5, zorder=3)
+    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+    ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}(\text{t})$')
+
+    ax = axes[1]
+    for c, col in enumerate(('sx', 'sy', 'sz')):
+        ax.plot(x, IS[:, c], '-', color=SPIN_COLORS[col], lw=1.5, zorder=3)
+    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+    ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}^{\text{S}_{\alpha}}(\text{t})$')
+
+    for ax in axes:
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
+        ax.set_xlim(x.min(), x.max())
+        _fmt_axes(ax)
+        _sci_yaxis(ax)
+    _alpha_legend(axes[1])
+    _save(fig, outdir, f'{PREFIX}_current_t_{lead}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ldos-csv', default=None,
@@ -508,6 +573,10 @@ def main():
                          'Por defecto se eligen 4 con espaciado geometrico.')
     ap.add_argument('--prefix', default='inbedding',
                     help='prefijo de los archivos de salida (usa tdnegf para el test)')
+    ap.add_argument('--bond', default='0,1',
+                    help='enlace i->j para las corrientes, indices del CSV (0-based): '
+                         '"0,1" = sitios i=1 -> j=2 de las figuras. Los CSV de enlaces se '
+                         'buscan junto al --rho-csv: <prefix>_bond_rho_t.csv y <prefix>_bond_H.csv')
     corte = ap.add_mutually_exclusive_group()
     corte.add_argument('--t-min', type=float, default=None,
                        help='recorta las figuras temporales a t >= t_min, para dejar '
@@ -594,6 +663,22 @@ def main():
     plot_rho_map(dr_all, args.outdir, lead, Omega=args.Omega)
     plot_spin_map(dr_all, args.outdir, lead, Omega=args.Omega)
     plot_occupation_t(dr, args.outdir, lead, Omega=args.Omega)
+
+    # corrientes del enlace (si existen los CSV de enlaces junto al rho-csv)
+    base = os.path.dirname(os.path.abspath(args.rho_csv))
+    bond_csv = os.path.join(base, f'{PREFIX}_bond_rho_t.csv')
+    bondH_csv = os.path.join(base, f'{PREFIX}_bond_H.csv')
+    if os.path.exists(bond_csv) and os.path.exists(bondH_csv):
+        n, m = (int(s) for s in args.bond.split(','))
+        dfb = pd.read_csv(bond_csv)
+        if t_min is not None:
+            dfb = dfb[dfb['t'] >= t_min]
+        t, I, IS, im = bond_currents(dfb, pd.read_csv(bondH_csv), lead, n, m)
+        print(f'  corrientes del enlace i={n + 1} -> j={m + 1}: max|Im|/max|Re| = {im:.1e}')
+        plot_current_t(t, I, IS, args.outdir, lead, Omega=args.Omega)
+    else:
+        print(f'  (sin {os.path.basename(bond_csv)} o {os.path.basename(bondH_csv)}: '
+              f'me salto las corrientes)')
 
 
 if __name__ == '__main__':

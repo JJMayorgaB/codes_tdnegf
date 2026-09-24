@@ -12,9 +12,9 @@ from matplotlib.lines import Line2D
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
-from inbedding_leads_plot import (          
+from inbedding_leads_plot import (
     _fmt_axes, _sci_yaxis, _site_colors, _pick_sites, _legend_en_hueco,
-    _legend_doble_en_hueco, SPIN_COLORS,
+    _legend_doble_en_hueco, SPIN_COLORS, bond_currents,
 )
 
 DEFAULT_FLOQUET_CSV = os.path.join(SCRIPT_DIR, 'output', 'inbedding_rho_t.csv')
@@ -167,6 +167,70 @@ def plot_spin_cmp(da, dt, outdir, lead, sites, nper, por_periodo):
     _save(fig, outdir, f'cmp_spin_t_{lead}')
 
 
+def _df_corrientes(rho_csv, prefix, lead, n, m, etiqueta):
+    """
+    Corrientes del enlace n -> m como DataFrame (t, lead, site=0, I, Isx, Isy, Isz),
+    leyendo <prefix>_bond_rho_t.csv y <prefix>_bond_H.csv junto al rho-csv. Asi se
+    reutilizan _window y plot_par tal cual.
+    """
+    base = os.path.dirname(os.path.abspath(rho_csv))
+    fb = os.path.join(base, f'{prefix}_bond_rho_t.csv')
+    fh = os.path.join(base, f'{prefix}_bond_H.csv')
+    if not (os.path.exists(fb) and os.path.exists(fh)):
+        print(f'  (sin {os.path.basename(fb)} o {os.path.basename(fh)} en {base}: '
+              f'me salto las corrientes)')
+        return None
+    t, I, IS, im = bond_currents(pd.read_csv(fb), pd.read_csv(fh), lead, n, m)
+    print(f'  {etiqueta:9s}  corrientes i={n + 1} -> j={m + 1}: max|Im|/max|Re| = {im:.1e}')
+    return pd.DataFrame({'t': t, 'lead': lead, 'site': 0, 'I': I,
+                         'Isx': IS[:, 0], 'Isy': IS[:, 1], 'Isz': IS[:, 2]})
+
+
+def plot_current_cmp(da, dt, outdir, lead, nper, por_periodo):
+    """Panel 1x2: corriente de carga | las tres corrientes de espin."""
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    ax = axes[0]
+    plot_par(ax, da, dt, 0, 'I', 'black', nper, por_periodo)
+    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+    ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}(\text{t})$')
+
+    ax = axes[1]
+    for col, sc in (('Isx', 'sx'), ('Isy', 'sy'), ('Isz', 'sz')):
+        plot_par(ax, da, dt, 0, col, SPIN_COLORS[sc], nper, por_periodo)
+    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+    ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}^{\text{S}_{\alpha}}(\text{t})$')
+
+    for ax in axes:
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
+        ax.set_xlim(0.0, nper)
+        _fmt_axes(ax)
+        _sci_yaxis(ax)
+
+    _legend_en_hueco(axes[0], _handles_estilo(), ['Floquet', 'TDNEGF'],
+                     ncol=1, fontsize=15, handlelength=1.6, labelspacing=0.35,
+                     handletextpad=0.6)
+    lab_a = [r'$\alpha=$', r'x,', r'y,', r'z']
+    col_a = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
+    _legend_doble_en_hueco(
+        axes[1],
+        ([Line2D([], [], ls='none') for _ in lab_a], lab_a,
+         dict(ncol=4, fontsize=20, handlelength=0.0, handletextpad=0.0,
+              columnspacing=0.45, labelcolor=col_a)),
+        (_handles_estilo(), ['Floquet', 'TDNEGF'],
+         dict(ncol=2, fontsize=16, handlelength=1.6, handletextpad=0.6,
+              columnspacing=1.4)))
+    _save(fig, outdir, f'cmp_current_t_{lead}')
+
+    print(f'\n  discrepancia maxima |Floquet - TDNEGF| en las corrientes')
+    for col in ('I', 'Isx', 'Isy', 'Isz'):
+        xa, ya = _curva(da, 0, col)
+        xt, yt = _curva(dt, 0, col)
+        dmax = np.abs(ya - np.interp(xa, xt, yt)).max()
+        esc = np.abs(ya).max()
+        print(f'    {col:4s}  {dmax:.2e}' + (f'  ({100 * dmax / esc:.1f}%)' if esc > 0 else ''))
+
+
 def reporte_discrepancia(da, dt, sites):
     """
     Discrepancia maxima entre las dos curvas, interpolando TDNEGF a la malla
@@ -209,6 +273,10 @@ def main():
                     help='sitios a graficar, separados por coma (0-based). Por '
                          'defecto 4 con espaciado geometrico, de entre los que '
                          'existen en AMBOS CSV.')
+    ap.add_argument('--bond', default='0,1',
+                    help='enlace i->j de las corrientes, 0-based ("0,1" = i=1 -> j=2). '
+                         'Los CSV de enlaces se buscan junto a cada rho-csv: '
+                         'inbedding_bond_*.csv y tdnegf_bond_*.csv')
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -232,6 +300,15 @@ def main():
     plot_spin_cmp(da, dt, args.outdir, args.lead, sites, args.periods,
                   args.markers_per_period)
     reporte_discrepancia(da, dt, sites)
+
+    n, m = (int(s) for s in args.bond.split(','))
+    ca = _df_corrientes(args.floquet_csv, 'inbedding', args.lead, n, m, 'Floquet')
+    ct = _df_corrientes(args.tdnegf_csv, 'tdnegf', args.lead, n, m, 'TDNEGF')
+    if ca is not None and ct is not None:
+        ca = _window(ca, args.lead, args.Omega, args.periods, 'Floquet')
+        ct = _window(ct, args.lead, args.Omega, args.periods, 'TDNEGF')
+        plot_current_cmp(ca, ct, args.outdir, args.lead, args.periods,
+                         args.markers_per_period)
 
 
 if __name__ == '__main__':

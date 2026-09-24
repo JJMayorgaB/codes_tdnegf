@@ -143,25 +143,9 @@ end
 end
 
 
-# Ǧ_ij de matriz completa (solo para validar la version rapida)
-function Gr_lead_ij(ω::Real, i::Int, j::Int, lead::Symbol, p::FloquetParams;
-                    η::Real, K::Union{LeadKernel,Nothing} = nothing)
-    Kr = isnothing(K) ? lead_kernel(ω, lead, p; η = η) : K
-    return dress(ω, i, j, lead, p; η = η, comp = :r) +
-           dress(ω, i, 0, lead, p; η = η, comp = :r) * Kr.Σr *
-           dress(ω, 0, j, lead, p; η = η, comp = :r)
-end
-
-function Gless_lead_ij(ω::Real, i::Int, j::Int, lead::Symbol, p::FloquetParams;
-                       η::Real, K::Union{LeadKernel,Nothing} = nothing)
-    Kr = isnothing(K) ? lead_kernel(ω, lead, p; η = η) : K
-    gl_r = dress(ω, i, 0, lead, p; η = η, comp = :r)
-    gl_l = dress(ω, i, 0, lead, p; η = η, comp = :<)
-    gr_a = dress(ω, 0, j, lead, p; η = η, comp = :a)
-    gr_l = dress(ω, 0, j, lead, p; η = η, comp = :<)
-    return dress(ω, i, j, lead, p; η = η, comp = :<) +
-           gl_l * Kr.Σa * gr_a + gl_r * Kr.Σl * gr_a + gl_r * Kr.Σr * gr_l
-end
+# Ǧ_ij de matriz completa (Gr_lead_ij, Gless_lead_ij): ahora viven en
+# inbedding_leads.jl (se usan tambien para las corrientes); aqui solo validan
+# la version rapida.
 
 # Columna de armonicos a un ω: bloques Ǧ^r_{ij,k0}, Ǧ^<_{ij,k0}, |k| ≤ K
 @inline colbase(kk, c, hp, nk) = 4 * ((kk - 1) + nk * ((c - 1) + 2 * (hp - 1)))

@@ -176,6 +176,78 @@ function depth_profile(p::FloquetParams; η::Real, ωmin::Real, ωmax::Real, Nω
     return Dict(key => -im .* v .* dω ./ (2π) for (key, v) in acc)
 end
 
+# elementos NO diagonales en sitio (corrientes de carga y de espin)
+#Ǧʳ_ij del lead entre los sitios i y j:  ǧʳ_ij + ǧʳ_i0 Σ̌ʳ ǧʳ_0j
+function Gr_lead_ij(ω::Real, i::Int, j::Int, lead::Symbol, p::FloquetParams;
+                    η::Real, K::Union{LeadKernel,Nothing} = nothing)
+    Kr = isnothing(K) ? lead_kernel(ω, lead, p; η = η) : K
+    return dress(ω, i, j, lead, p; η = η, comp = :r) +
+           dress(ω, i, 0, lead, p; η = η, comp = :r) * Kr.Σr *
+           dress(ω, 0, j, lead, p; η = η, comp = :r)
+end
+
+#Ǧ<_ij del lead: ǧ<_ij + ǧ<_i0 Σ̌ᵃ ǧᵃ_0j + ǧʳ_i0 Σ̌< ǧᵃ_0j + ǧʳ_i0 Σ̌ʳ ǧ<_0j  (Gless_lead = caso i=j)
+function Gless_lead_ij(ω::Real, i::Int, j::Int, lead::Symbol, p::FloquetParams;
+                       η::Real, K::Union{LeadKernel,Nothing} = nothing)
+    Kr = isnothing(K) ? lead_kernel(ω, lead, p; η = η) : K
+    gl_r = dress(ω, i, 0, lead, p; η = η, comp = :r)
+    gl_l = dress(ω, i, 0, lead, p; η = η, comp = :<)
+    gr_a = dress(ω, 0, j, lead, p; η = η, comp = :a)
+    gr_l = dress(ω, 0, j, lead, p; η = η, comp = :<)
+    return dress(ω, i, j, lead, p; η = η, comp = :<) +
+           gl_l * Kr.Σa * gr_a + gl_r * Kr.Σl * gr_a + gl_r * Kr.Σr * gr_l
+end
+
+"""
+    hop_lead(lead, p) -> 2x2
+
+Bloque de hopping H_{n,n+1} = ⟨n|H|n+1⟩ entre dos sitios consecutivos del lead,
+con n+1 mas adentro. Con H = Σ_j c_j† T̂ c_{j+1} + h.c. (T̂ = T_hop) y los sitios
+del lead R en j = C+1+n (hacia +x) y los del L en j = C-1-n (hacia -x):
+    lead R:  H_{n,n+1} = T̂        lead L:  H_{n,n+1} = T̂†
+(consistente con T_inout: Σ del sitio 0 = H_{0C} Ǧ_C H_{C0}). H_{n+1,n} = H_{n,n+1}†.
+"""
+hop_lead(lead::Symbol, p::FloquetParams) = lead === :R ? T_hop(p) : adjoint(T_hop(p))
+
+"""
+    bond_profile(p; η, ωmin, ωmax, Nω, bonds, leads, Kmax)
+
+Armonicos ρ_{nm,k} = -i ∫ dω/2π Ǧ<_{nm,k0}(ω) de los bloques NO diagonales en sitio
+del lead, para cada par (n,m) de `bonds` y tambien para (m,n). Misma convencion que
+depth_profile: ρ_{nm}(t) = Σ_k e^{-ikΩt} ρ_{nm,k}, con ρ_{nm} = ⟨c_m† c_n⟩ (bloque 2x2 en espin).
+Devuelve Dict{(lead,n,m,k) => matriz 2x2}.
+"""
+function bond_profile(p::FloquetParams; η::Real, ωmin::Real, ωmax::Real, Nω::Int,
+                      bonds, leads = (:L, :R), Kmax::Int = min(2, p.N))
+    ωs  = range(ωmin, ωmax; length = Nω)
+    dω  = step(ωs)
+    pares = unique(vcat([(n, m) for (n, m) in bonds], [(m, n) for (n, m) in bonds]))
+    acc = Dict{Tuple{Symbol,Int,Int,Int}, Matrix{ComplexF64}}()
+    for α in leads, (n, m) in pares, k in -Kmax:Kmax
+        acc[(α, n, m, k)] = zeros(ComplexF64, 2, 2)
+    end
+    for ω in ωs, α in leads
+        K = lead_kernel(ω, α, p; η = η)          # una vez por (ω, lead)
+        for (n, m) in pares
+            Gl = Gless_lead_ij(ω, n, m, α, p; η = η, K = K)
+            for k in -Kmax:Kmax
+                acc[(α, n, m, k)] .+= fget(Gl, k, 0, p)
+            end
+        end
+    end
+    return Dict(key => -im .* v .* dω ./ (2π) for (key, v) in acc)
+end
+
+"Chequeo de hermiticidad de ρ(t): ρ_{nm,k} = (ρ_{mn,-k})†. Devuelve el maximo error."
+function bond_hermiticity(prof)
+    e = 0.0
+    for ((α, n, m, k), v) in prof
+        haskey(prof, (α, m, n, -k)) || continue
+        e = max(e, maximum(abs.(v - adjoint(prof[(α, m, n, -k)]))))
+    end
+    return e
+end
+
 # diagnosticos
 "Longitud de decaimiento inducida por η: la correccion va como |u|ⁿ, ℓ = -1/ln|u|."
 function decay_length(ω::Real, p::FloquetParams; η::Real)
@@ -289,7 +361,8 @@ El sitio n=0 es la superficie (vecino del sitio manejado).
 function sweep_leads(p::FloquetParams = FloquetParams();
                      ωmin = -3.0, ωmax = 3.0, Nω = 6001, η = nothing,
                      sites = [0, 1, 4, 16],
-                     leads = (:L, :R), Nper = 3, Nt = 601)
+                     leads = (:L, :R), Nper = 3, Nt = 601,
+                     bonds = [(0, 1)])
     ωs = range(ωmin, ωmax; length = Nω)
     dω = step(ωs)
     ηe = isnothing(η) ? 2dω : η
@@ -334,6 +407,56 @@ function sweep_leads(p::FloquetParams = FloquetParams();
     path2 = joinpath(OUT, "inbedding_rho_t.csv")
     writedlm(path2, vcat(permutedims(hdr2), data2), ",")
     println("  -> ", path2)
+
+    #3. bloques NO diagonales en sitio ρ_nm(t), ρ_mn(t) de los enlaces (para las
+    #   corrientes). Mismo formato que tdnegf_bond_rho_t.csv / tdnegf_bond_H.csv.
+    bprof = bond_profile(p; η = ηe, ωmin = ωmin, ωmax = ωmax, Nω = Nω,
+                         bonds = bonds, leads = leads)
+    @printf("  enlaces: max|ρ_{nm,k} - (ρ_{mn,-k})†| = %.2e\n", bond_hermiticity(bprof))
+    ent  = ((1, 1), (1, 2), (2, 1), (2, 2))
+    hdr3 = Any["t", "lead", "n", "m"]
+    for blk in ("nm", "mn"), s in ("uu", "ud", "du", "dd"), c in ("Re", "Im")
+        push!(hdr3, "$(c)_rho_$(blk)_$(s)")
+    end
+    data3 = Matrix{Any}(undef, length(leads) * length(bonds) * Nt, length(hdr3))
+    i3 = 0
+    for α in leads, (n, m) in bonds
+        ρnm = Dict(k => bprof[(α, n, m, k)] for k in -Kmax:Kmax)
+        ρmn = Dict(k => bprof[(α, m, n, k)] for k in -Kmax:Kmax)
+        for t in tgrid
+            A = rho_of_t(t, ρnm, p.Ω); B = rho_of_t(t, ρmn, p.Ω)
+            row = Any[t, String(α), n, m]
+            for X in (A, B), (s1, s2) in ent
+                push!(row, real(X[s1, s2])); push!(row, imag(X[s1, s2]))
+            end
+            i3 += 1
+            data3[i3, :] = row
+        end
+    end
+    path3 = joinpath(OUT, "inbedding_bond_rho_t.csv")
+    writedlm(path3, vcat(permutedims(hdr3), data3), ",")
+    println("  -> ", path3)
+
+    # hopping H_nm (solo enlaces de primeros vecinos, m = n+1 o n-1)
+    hdrH = Any["lead", "n", "m"]
+    for blk in ("nm", "mn"), s in ("uu", "ud", "du", "dd"), c in ("Re", "Im")
+        push!(hdrH, "$(c)_H_$(blk)_$(s)")
+    end
+    dataH = Matrix{Any}(undef, length(leads) * length(bonds), length(hdrH))
+    iH = 0
+    for α in leads, (n, m) in bonds
+        abs(n - m) == 1 || error("sweep_leads: el enlace ($n,$m) no es de primeros vecinos")
+        Hnm = m == n + 1 ? hop_lead(α, p) : adjoint(hop_lead(α, p))
+        row = Any[String(α), n, m]
+        for X in (Hnm, adjoint(Hnm)), (s1, s2) in ent
+            push!(row, real(X[s1, s2])); push!(row, imag(X[s1, s2]))
+        end
+        iH += 1
+        dataH[iH, :] = row
+    end
+    pathH = joinpath(OUT, "inbedding_bond_H.csv")
+    writedlm(pathH, vcat(permutedims(hdrH), dataH), ",")
+    println("  -> ", pathH)
 
     println()
     for α in leads, n in sites

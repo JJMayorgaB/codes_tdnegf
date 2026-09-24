@@ -37,6 +37,12 @@ const FREE   = Int[]
 const N_LEAD_OUT = min(N_BUF - 1, 20)
 lead_site(α::Symbol, n::Int) = α === :R ? SITE_C + 1 + n : SITE_C - 1 - n
 
+# enlaces para las corrientes: (lead, n, m) con m = n+1 mas adentro; n = -1 es el
+# sitio manejado (enlace C <-> sitio 0 del lead). Sitio TDNEGF del indice analitico n:
+bond_site(α::Symbol, n::Int) = n == -1 ? SITE_C : lead_site(α, n)
+const BONDS = [(α, n, n + 1) for α in (:L, :R) for n in -1:(N_LEAD_OUT - 1)]
+const N_BOND_CSV = 5                 # el CSV guarda solo n <= N_BOND_CSV (el jld2 guarda todos)
+
 #parametros
 const γso   = 0.1
 const γ     = sqrt(1 - γso^2)        # = 0.994987
@@ -191,6 +197,54 @@ function write_driven_csv(obs)
     return nothing
 end
 
+"""
+Bloques NO diagonales en sitio de ρ para los enlaces BONDS, comparables con
+bond_profile de inbedding_leads.jl. Convencion ρ_ab = ⟨c_b† c_a⟩ (la de ρ_ab en
+TDNEGF, igual que -iG^<(t,t) del analitico); orden de espin (↑,↓).
+  tdnegf_bond_rho_t.csv : t, lead, n, m, ρ_nm (uu,ud,du,dd) y ρ_mn, Re e Im
+  tdnegf_bond_H.csv     : bloques de hopping H_nm y H_mn (constantes)
+"""
+function write_bond_csv(t_b, rho_b, H_b)
+    hdr = ["t", "lead", "n", "m"]
+    for blk in ("nm", "mn"), s in ("uu", "ud", "du", "dd"), c in ("Re", "Im")
+        push!(hdr, "$(c)_rho_$(blk)_$(s)")
+    end
+    qs = [q for (q, (α, n, m)) in enumerate(BONDS) if n <= N_BOND_CSV]
+    data = Matrix{Any}(undef, length(t_b) * length(qs), length(hdr))
+    r = 0
+    ent = ((1, 1), (1, 2), (2, 1), (2, 2))
+    for q in qs, io in eachindex(t_b)
+        α, n, m = BONDS[q]
+        row = Any[t_b[io], String(α), n, m]
+        for o in 1:2, (s1, s2) in ent
+            z = rho_b[s1, s2, o, q, io]
+            push!(row, real(z)); push!(row, imag(z))
+        end
+        r += 1
+        data[r, :] = row
+    end
+    path = joinpath(OUT_RUN, "tdnegf_bond_rho_t.csv")
+    writedlm(path, vcat(permutedims(hdr), data), ",")
+    println("  -> ", path, "   (", length(qs), " enlaces con n <= ", N_BOND_CSV, ", ", length(t_b), " tiempos)")
+
+    hdrH = ["lead", "n", "m"]
+    for blk in ("nm", "mn"), s in ("uu", "ud", "du", "dd"), c in ("Re", "Im")
+        push!(hdrH, "$(c)_H_$(blk)_$(s)")
+    end
+    dataH = Matrix{Any}(undef, length(BONDS), length(hdrH))
+    for (q, (α, n, m)) in enumerate(BONDS)
+        row = Any[String(α), n, m]
+        for o in 1:2, (s1, s2) in ent
+            push!(row, real(H_b[s1, s2, o, q])); push!(row, imag(H_b[s1, s2, o, q]))
+        end
+        dataH[q, :] = row
+    end
+    pathH = joinpath(OUT_RUN, "tdnegf_bond_H.csv")
+    writedlm(pathH, vcat(permutedims(hdrH), dataH), ",")
+    println("  -> ", pathH)
+    return nothing
+end
+
 function write_params_label()
     open(joinpath(OUT_RUN, "params.txt"), "w") do io
         println(io, "TDNEGF: UN SOLO ESPIN CON DRIVING IMPUESTO")
@@ -266,6 +320,14 @@ function run_sim()
     obs = ObservablesTDNEGF(p_model; N_tmax = N_steps, N_leads = 2)
     S_hist = Array{Float64}(undef, 3, N_SPINS, N_steps)
 
+    # bloques no diagonales de ρ en los enlaces, cada OUT_STRIDE pasos
+    # rho_b[s1, s2, o, q, io]: o = 1 -> ρ_nm, o = 2 -> ρ_mn  (n, m = BONDS[q])
+    N_loc  = p_model.N_loc
+    br     = [(get_sub(bond_site(α, n), N_loc), get_sub(bond_site(α, m), N_loc)) for (α, n, m) in BONDS]
+    idx_b  = 1:OUT_STRIDE:N_steps
+    rho_b  = Array{ComplexF64}(undef, 2, 2, 2, length(BONDS), length(idx_b))
+    t_b    = Vector{Float64}(undef, length(idx_b))
+
     started = time()
     for i in 1:N_steps
         obs.idx = i
@@ -282,6 +344,14 @@ function run_sim()
         obs_n_i!(dv, p_model, obs)
         obs_σ_i!(dv, p_model, obs)
         obs_Ixα!(dv, p_blocks, obs)
+        if (i - 1) % OUT_STRIDE == 0
+            io = (i - 1) ÷ OUT_STRIDE + 1
+            t_b[io] = intg.t
+            for (q, (ra, rb)) in enumerate(br)
+                rho_b[:, :, 1, q, io] .= dv.ρ_ab[ra, rb]
+                rho_b[:, :, 2, q, io] .= dv.ρ_ab[rb, ra]
+            end
+        end
 
         for m in 1:N_SPINS, c in 1:3
             S_hist[c, m, i] = sys.dipoles[m, 1, 1, 1][c]
@@ -303,13 +373,33 @@ function run_sim()
     end
     @printf("\nDinamica lista en %.1f s\n", time() - started)
 
+    # hopping en los enlaces (constante: update_H_e! solo toca bloques on-site)
+    H_b = Array{ComplexF64}(undef, 2, 2, 2, length(BONDS))
+    for (q, (ra, rb)) in enumerate(br)
+        H_b[:, :, 1, q] .= p_model.H_ab[ra, rb]
+        H_b[:, :, 2, q] .= p_model.H_ab[rb, ra]
+    end
+    # chequeos: ρ hermitica (ρ_mn = ρ_nm†) y hopping igual al del analitico
+    eh = maximum(maximum(abs.(rho_b[:, :, 2, q, io] - adjoint(rho_b[:, :, 1, q, io])))
+                 for q in eachindex(BONDS), io in eachindex(t_b))
+    σ0_ = ComplexF64[1 0; 0 1]; σy_ = ComplexF64[0 -im; im 0]
+    That = -γ * σ0_ - im * γso * σy_                       # T̂ = H_{j,j+1} del analitico (T_hop)
+    eT = maximum(maximum(abs.(H_b[:, :, 1, q] - (α === :R ? That : adjoint(That))))
+                 for (q, (α, n, m)) in enumerate(BONDS))
+    @printf("chequeo enlaces: max|ρ_mn - ρ_nm†| = %.2e   max|H_nm - H_analitico| = %.2e\n", eh, eT)
+    eT > 1e-10 && println("   AVISO: el hopping de TDNEGF no coincide con T̂ = -γσ0 - iγso σy del analitico",
+                          " (revisar convencion de build_H_ab antes de comparar corrientes)")
+
     jldsave(joinpath(OUT_RUN, "fields.jld2");
             t = obs.t, s_i = S_hist, sigma_i = obs.σx_i, n_i = obs.n_i,
             I_alpha = obs.Iα, I_alpha_x = obs.Iαx,
+            t_bond = t_b, rho_bond = rho_b, H_bond = H_b,
+            bonds = [(String(α), n, m) for (α, n, m) in BONDS],
             geometry = geometry(), params = prep_params())
     println("Observables: fields.jld2")
     write_lead_csv(obs)
     write_driven_csv(obs)
+    write_bond_csv(t_b, rho_b, H_b)
     return nothing
 end
 
