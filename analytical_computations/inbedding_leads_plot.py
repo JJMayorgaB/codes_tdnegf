@@ -504,10 +504,14 @@ def bond_currents(dfb, dfh, lead, n, m):
     """
     Corrientes del enlace i -> j con i = n, j = m (indices del CSV, i = n+1 en las
     figuras), tal cual la definicion
-        I_{i->j}(t)        = -i Tr_s{ H_ij rho^ij - H_ji rho^ji }
-        I^{S_a}_{i->j}(t)  = -i Tr_s{ sigma^a [ H_ij rho^ij - H_ji rho^ji ] }
-    con rho^ij = <c_i^dag c_j>. Los CSV guardan rho_nm = <c_m^dag c_n> (convencion
-    de TDNEGF y de -iG^<), asi que rho^ij = rho_mn y rho^ji = rho_nm.
+        I_{i->j}(t)        = -i Tr_s{ H_ij rho^ij - rho^ji H_ji }
+        I^{S_a}_{i->j}(t)  = -i Tr_s{ sigma^a [ H_ij rho^ij - rho^ji H_ji ] }
+    con rho^ij = <c_i^dag c_j>. El segundo termino va como rho^ji H_ji (forma
+    hermitica): asi I^{S_a} es real para cualquier rho hermitica; con H_ji rho^ji
+    las componentes que no conmutan con el hopping de Rashba salen complejas. En
+    la corriente de carga las dos formas coinciden (traza ciclica).
+    Los CSV guardan rho_nm = <c_m^dag c_n> (convencion de TDNEGF y de -iG^<), asi
+    que rho^ij = rho_mn y rho^ji = rho_nm.
     Devuelve t, I, I^S (N, 3) y el maximo |Im| relativo (debe ser ~0).
     """
     b = dfb[(dfb['lead'] == lead) & (dfb['n'] == n) & (dfb['m'] == m)].sort_values('t')
@@ -518,7 +522,7 @@ def bond_currents(dfb, dfh, lead, n, m):
         raise SystemExit(f'no hay el hopping del enlace ({n},{m}) del lead {lead}')
     rho_ij, rho_ji = _bloques(b, 'rho', 'mn'), _bloques(b, 'rho', 'nm')
     H_ij, H_ji = _bloques(h, 'H', 'nm')[0], _bloques(h, 'H', 'mn')[0]
-    X = np.einsum('ab,tbc->tac', H_ij, rho_ij) - np.einsum('ab,tbc->tac', H_ji, rho_ji)
+    X = np.einsum('ab,tbc->tac', H_ij, rho_ij) - np.einsum('tab,bc->tac', rho_ji, H_ji)
     I = -1j * np.einsum('taa->t', X)
     IS = np.stack([-1j * np.einsum('ab,tba->t', s, X) for s in _PAULI], axis=-1)
     esc = max(np.abs(I.real).max(), np.abs(IS.real).max(), 1e-300)
