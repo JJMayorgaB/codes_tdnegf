@@ -25,6 +25,9 @@ for s in "${SETS[@]}"; do
 done
 wait
 
+ls */output/setup*_*/spins_t.csv | wc -l | grep -qx $(( ${#SETS[@]} * 4 )) || \
+  { echo "alguna corrida fallo: revisar */output/logs/"; exit 1; }
+
 for s in "${SETS[@]}"; do
   read g th om <<< "$s"
   t=$(tag $g $th $om)

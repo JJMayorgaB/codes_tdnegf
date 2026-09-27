@@ -336,7 +336,8 @@ function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString,
 
     llg_relax = Langevin(Δt; damping = damping_relax, kT = kT)
     # sin damping intrinseco: integrador conservativo (Langevin exige damping > 0)
-    llg_dyn = damping_dyn > 0 ? Langevin(Δt; damping = damping_dyn, kT = kT) : ImplicitMidpoint(Δt)
+    # (Sunny.ImplicitMidpoint: DifferentialEquations exporta otro ImplicitMidpoint)
+    llg_dyn = damping_dyn > 0 ? Langevin(Δt; damping = damping_dyn, kT = kT) : Sunny.ImplicitMidpoint(Δt)
 
     N_steps = Int(round(t_final / Δt))
     obs = ObservablesTDNEGF(p_model; N_tmax = N_steps, N_leads = 2)
