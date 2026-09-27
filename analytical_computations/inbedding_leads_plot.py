@@ -538,8 +538,14 @@ def plot_current_t(t, I, IS, outdir, lead, Omega):
 
     ax = axes[0]
     ax.plot(x, I, '-', color='black', lw=1.5, zorder=3)
-    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
     ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}(\text{t})$')
+    # centrada en la curva, con la mitad de su rango como margen a cada lado
+    # (sin la linea en cero: si I no cruza el cero, forzarla aplasta la curva)
+    lo, hi = I.min(), I.max()
+    pad = 0.5 * (hi - lo) if hi > lo else max(abs(hi), 1e-300)
+    ax.set_ylim(lo - pad, hi + pad)
+    if lo - pad < 0.0 < hi + pad:
+        ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
 
     ax = axes[1]
     for c, col in enumerate(('sx', 'sy', 'sz')):
@@ -551,8 +557,27 @@ def plot_current_t(t, I, IS, outdir, lead, Omega):
         ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
         ax.set_xlim(x.min(), x.max())
         _fmt_axes(ax)
+
+    # etiqueta alpha = x, y, z centrada arriba, y eje simetrico con el aire justo
+    # para que quepa ENCIMA de las curvas: se mide la altura h de la etiqueta (en
+    # fraccion del eje) y se elige y_max tal que el pico de las curvas quede por
+    # debajo de 1 - h - margen.
+    ax = axes[1]
+    lab = [r'$\alpha=$', r'x,', r'y,', r'z']
+    col = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
+    leg = ax.legend([Line2D([], [], ls='none') for _ in lab], lab, loc='upper center',
+                    ncol=len(lab), frameon=False, fontsize=20, handlelength=0.0,
+                    handletextpad=0.0, columnspacing=0.45, labelcolor=col,
+                    borderaxespad=0.2)
+    A = np.abs(IS).max()
+    if A > 0:
+        fig.tight_layout()
+        fig.canvas.draw()
+        h = leg.get_window_extent().transformed(ax.transAxes.inverted()).height
+        libre = 1.0 - 2.0 * (h + 0.04)          # fraccion de medio eje para las curvas
+        ax.set_ylim(-A / libre, A / libre)
+    for ax in axes:
         _sci_yaxis(ax)
-    _alpha_legend(axes[1])
     _save(fig, outdir, f'{PREFIX}_current_t_{lead}')
 
 

@@ -186,6 +186,53 @@ def _df_corrientes(rho_csv, prefix, lead, n, m, etiqueta):
                          'Isx': IS[:, 0], 'Isy': IS[:, 1], 'Isz': IS[:, 2]})
 
 
+_LAB_A = [r'$\alpha=$', r'x,', r'y,', r'z']
+_COL_A = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
+_KW_A = dict(ncol=4, fontsize=20, handlelength=0.0, handletextpad=0.0,
+             columnspacing=0.45, labelcolor=_COL_A)
+_KW_E = dict(ncol=2, fontsize=16, handlelength=1.6, handletextpad=0.6, columnspacing=1.4)
+
+
+def _panel_corriente_espin(ax, da, dt, nper, por_periodo):
+    """Las tres corrientes de espin, Floquet (linea) y TDNEGF (circulos)."""
+    for col, sc in (('Isx', 'sx'), ('Isy', 'sy'), ('Isz', 'sz')):
+        plot_par(ax, da, dt, 0, col, SPIN_COLORS[sc], nper, por_periodo)
+    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+    ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}^{\text{S}_{\alpha}}(\text{t})$')
+
+
+def _amp_espin(da, dt):
+    """Pico de |I^S| sobre las dos curvas (para fijar un eje simetrico)."""
+    return max(np.abs(d[c]).max() for d in (da, dt) for c in ('Isx', 'Isy', 'Isz'))
+
+
+def _leyenda_arriba(fig, ax, A, sep=0.01, margen=0.04):
+    """
+    Bloque de dos filas centrado ARRIBA del panel:
+        alpha = x, y, z
+        - Floquet   . TDNEGF
+    y eje y con el aire justo para que el bloque quede encima de las curvas: abajo
+    un margen fijo (y_min = -1.08 A) y arriba se mide la altura h del bloque y se
+    elige y_max para que el pico +A quede en la fraccion 1 - h - margen del eje.
+    """
+    l1 = ax.legend([Line2D([], [], ls='none') for _ in _LAB_A], _LAB_A, loc='upper center',
+                   frameon=False, borderaxespad=0.2, **_KW_A)
+    ax.add_artist(l1)
+    fig.tight_layout()
+    fig.canvas.draw()
+    inv = ax.transAxes.inverted()
+    b1 = l1.get_window_extent().transformed(inv)
+    l2 = ax.legend(_handles_estilo(), ['Floquet', 'TDNEGF'], loc='upper center',
+                   bbox_to_anchor=(0.5, b1.y0 - sep), bbox_transform=ax.transAxes,
+                   frameon=False, borderaxespad=0.0, **_KW_E)
+    fig.canvas.draw()
+    b2 = l2.get_window_extent().transformed(inv)
+    h = 1.0 - b2.y0
+    if A > 0:
+        ymin = -1.08 * A
+        ax.set_ylim(ymin, ymin + (A - ymin) / (1.0 - h - margen))
+
+
 def plot_current_cmp(da, dt, outdir, lead, nper, por_periodo):
     """Panel 1x2: corriente de carga | las tres corrientes de espin."""
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -195,31 +242,19 @@ def plot_current_cmp(da, dt, outdir, lead, nper, por_periodo):
     ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
     ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}(\text{t})$')
 
-    ax = axes[1]
-    for col, sc in (('Isx', 'sx'), ('Isy', 'sy'), ('Isz', 'sz')):
-        plot_par(ax, da, dt, 0, col, SPIN_COLORS[sc], nper, por_periodo)
-    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
-    ax.set_ylabel(r'$\text{I}_{\text{i}\rightarrow \text{j}}^{\text{S}_{\alpha}}(\text{t})$')
+    _panel_corriente_espin(axes[1], da, dt, nper, por_periodo)
 
     for ax in axes:
         ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
         ax.set_xlim(0.0, nper)
         _fmt_axes(ax)
-        _sci_yaxis(ax)
 
     _legend_en_hueco(axes[0], _handles_estilo(), ['Floquet', 'TDNEGF'],
                      ncol=1, fontsize=15, handlelength=1.6, labelspacing=0.35,
                      handletextpad=0.6)
-    lab_a = [r'$\alpha=$', r'x,', r'y,', r'z']
-    col_a = ['black', SPIN_COLORS['sx'], SPIN_COLORS['sy'], SPIN_COLORS['sz']]
-    _legend_doble_en_hueco(
-        axes[1],
-        ([Line2D([], [], ls='none') for _ in lab_a], lab_a,
-         dict(ncol=4, fontsize=20, handlelength=0.0, handletextpad=0.0,
-              columnspacing=0.45, labelcolor=col_a)),
-        (_handles_estilo(), ['Floquet', 'TDNEGF'],
-         dict(ncol=2, fontsize=16, handlelength=1.6, handletextpad=0.6,
-              columnspacing=1.4)))
+    _leyenda_arriba(fig, axes[1], _amp_espin(da, dt))
+    for ax in axes:
+        _sci_yaxis(ax)
     _save(fig, outdir, f'cmp_current_t_{lead}')
 
     print(f'\n  discrepancia maxima |Floquet - TDNEGF| en las corrientes')
@@ -229,6 +264,42 @@ def plot_current_cmp(da, dt, outdir, lead, nper, por_periodo):
         dmax = np.abs(ya - np.interp(xa, xt, yt)).max()
         esc = np.abs(ya).max()
         print(f'    {col:4s}  {dmax:.2e}' + (f'  ({100 * dmax / esc:.1f}%)' if esc > 0 else ''))
+
+
+def plot_spin_current_cmp(da, dt, ca, ct, outdir, lead, site, nper, por_periodo):
+    """
+    Panel 1x2: densidad de espin en el sitio i = site+1 | corrientes de espin.
+    La leyenda (alpha = x, y, z  /  Floquet . TDNEGF) va en el primer panel; el
+    segundo va sin leyenda y con el eje simetrico ajustado al pico de |I^S|.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    ax = axes[0]
+    for col in ('sx', 'sy', 'sz'):
+        plot_par(ax, da, dt, site, col, SPIN_COLORS[col], nper, por_periodo)
+    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+    ax.set_ylabel(r'$\langle\hat{\sigma}^{\alpha}_{\text{i}}\rangle(t)$')
+
+    _panel_corriente_espin(axes[1], ca, ct, nper, por_periodo)
+    A = _amp_espin(ca, ct)
+    if A > 0:
+        axes[1].set_ylim(-1.15 * A, 1.15 * A)
+
+    for ax in axes:
+        ax.set_xlabel(r'$\text{Time}\, (2\pi/\Omega)$')
+        ax.set_xlim(0.0, nper)
+        _fmt_axes(ax)
+        _sci_yaxis(ax)
+
+    # fila de arriba:  alpha = x, y, z    i = site+1   (el sitio va en la leyenda,
+    # no como titulo del panel)
+    lab = _LAB_A + [rf'$\qquad\text{{i}}={site + 1}$']
+    kw = dict(_KW_A, ncol=len(lab), labelcolor=_COL_A + ['black'])
+    _legend_doble_en_hueco(
+        axes[0],
+        ([Line2D([], [], ls='none') for _ in lab], lab, kw),
+        (_handles_estilo(), ['Floquet', 'TDNEGF'], _KW_E))
+    _save(fig, outdir, f'cmp_spin_current_t_{lead}')
 
 
 def reporte_discrepancia(da, dt, sites):
@@ -309,6 +380,11 @@ def main():
         ct = _window(ct, args.lead, args.Omega, args.periods, 'TDNEGF')
         plot_current_cmp(ca, ct, args.outdir, args.lead, args.periods,
                          args.markers_per_period)
+        if n in set(da['site'].unique()) & set(dt['site'].unique()):
+            plot_spin_current_cmp(da, dt, ca, ct, args.outdir, args.lead, n,
+                                  args.periods, args.markers_per_period)
+        else:
+            print(f'  (el sitio {n + 1} no esta en ambos rho-csv: me salto cmp_spin_current_t)')
 
 
 if __name__ == '__main__':
