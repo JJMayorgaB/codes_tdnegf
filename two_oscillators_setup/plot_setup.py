@@ -207,25 +207,30 @@ def plot_bond_currents(run, geo, T, t_min, figdir):
 
 
 def plot_lead_currents(run, T, t_min, figdir):
+    """Panel 2x2: fila de arriba lead R (carga | espin), fila de abajo lead L."""
     d = _recorte(pd.read_csv(os.path.join(run, 'lead_currents_t.csv')), t_min)
     x = d['t'].to_numpy() / T
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    ax = axes[0]
-    ax.plot(x, d['I_L'], '-', color='black', lw=1.5, zorder=3)
-    ax.plot(x, d['I_R'], '--', color='black', lw=1.5, zorder=3)
-    ax.set_ylabel(r'$\text{I}_{\text{L,R}}(\text{t})$')
-    ax = axes[1]
-    for a, col in COMP:
-        ax.plot(x, d[f'Is{a}_L'], '-', color=col, lw=1.5, zorder=3)
-        ax.plot(x, d[f'Is{a}_R'], '--', color=col, lw=1.5, zorder=3)
-    ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
-    ax.set_ylabel(r'$\text{I}^{\text{S}_{\alpha}}_{\text{L,R}}(\text{t})$')
-    for ax in axes:
-        ax.set_xlabel(TLAB); ax.set_xlim(x.min(), x.max()); _fmt_axes(ax); _sci_yaxis(ax)
-    _legend_en_hueco(axes[0], [Line2D([], [], color='0.25', lw=2.0, ls='-'),
-                               Line2D([], [], color='0.25', lw=2.0, ls='--')],
-                     ['L', 'R'], ncol=1, fontsize=15, handlelength=1.6)
-    _alpha_legend(axes[1])
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+    for r, lead in enumerate(('R', 'L')):
+        ax = axes[r, 0]
+        I = d[f'I_{lead}'].to_numpy()
+        ax.plot(x, I, '-', color='black', lw=1.5, zorder=3)
+        lo, hi = I.min(), I.max()
+        pad = 0.5 * (hi - lo) if hi > lo else max(abs(hi), 1e-300)
+        ax.set_ylim(lo - pad, hi + pad)
+        if lo - pad < 0.0 < hi + pad:
+            ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+        ax.set_ylabel(rf'$\text{{I}}_{{\text{{{lead}}}}}(\text{{t}})$')
+        ax = axes[r, 1]
+        for a, col in COMP:
+            ax.plot(x, d[f'Is{a}_{lead}'].to_numpy(), '-', color=col, lw=1.5, zorder=3)
+        ax.axhline(0.0, color='0.5', ls='--', lw=1.0, zorder=1)
+        ax.set_ylabel(rf'$\text{{I}}^{{\text{{S}}_{{\alpha}}}}_{{\text{{{lead}}}}}(\text{{t}})$')
+    for ax in axes.flat:
+        ax.set_xlim(x.min(), x.max()); _fmt_axes(ax); _sci_yaxis(ax)
+    for ax in axes[-1, :]:
+        ax.set_xlabel(TLAB)
+    _alpha_legend(axes[0, 1])
     _save(fig, figdir, 'lead_currents_t')
 
 
@@ -233,32 +238,35 @@ def main():
     ap = argparse.ArgumentParser(description='Figuras de los setups de dos osciladores.')
     ap.add_argument('runs', nargs='+', help='carpetas de corrida (<precesion>/output/<setup>_<tag>)')
     corte = ap.add_mutually_exclusive_group()
-    corte.add_argument('--t-min', type=float, default=None, help='graficar solo t >= t_min')
+    corte.add_argument('--t-min', type=float, default=None,
+                       help='graficar solo t >= t_min (en vez de la evolucion completa + ultimos 5T)')
     corte.add_argument('--last-periods', type=float, default=None, metavar='N',
-                       help='graficar solo los ultimos N periodos del driver')
+                       help='graficar solo los ultimos N periodos (en vez de completa + ultimos 5T)')
     args = ap.parse_args()
 
     for run in args.runs:
         run = os.path.abspath(run)
         geo, Omega, t_on, setup, axis = leer_corrida(run)
         T = 2 * np.pi / Omega
-        t_min = args.t_min
-        figdir = os.path.join(run, 'figures')
-        if args.last_periods is not None:
-            t_max = pd.read_csv(os.path.join(run, 'spins_t.csv'), usecols=['t'])['t'].max()
-            t_min = t_max - args.last_periods * T
-            figdir = os.path.join(run, f'figures_last{args.last_periods:g}T')
-        elif t_min is not None:
-            figdir = os.path.join(run, f'figures_tmin{t_min:g}')
-        os.makedirs(figdir, exist_ok=True)
+        t_max = pd.read_csv(os.path.join(run, 'spins_t.csv'), usecols=['t'])['t'].max()
+        # por defecto: evolucion completa (figures/) y ultimos 5 periodos (figures_last5T/)
+        if args.t_min is not None:
+            ventanas = [(args.t_min, f'figures_tmin{args.t_min:g}')]
+        elif args.last_periods is not None:
+            ventanas = [(t_max - args.last_periods * T, f'figures_last{args.last_periods:g}T')]
+        else:
+            ventanas = [(None, 'figures'), (t_max - 5 * T, 'figures_last5T')]
         print(f'== {setup}, precesion en {axis}: {run}\n   roles {list(geo["role"])} en los sitios '
               f'{list(geo["site"])}   T = {T:.1f}   t_on = {t_on:.1f}')
-        plot_spins(run, geo, T, t_min, figdir)
-        plot_spin_density(run, geo, T, t_min, figdir)
-        plot_rho_sites(run, geo, T, t_min, figdir)
-        plot_bond_rho(run, geo, T, t_min, figdir)
-        plot_bond_currents(run, geo, T, t_min, figdir)
-        plot_lead_currents(run, T, t_min, figdir)
+        for t_min, sub in ventanas:
+            figdir = os.path.join(run, sub)
+            os.makedirs(figdir, exist_ok=True)
+            plot_spins(run, geo, T, t_min, figdir)
+            plot_spin_density(run, geo, T, t_min, figdir)
+            plot_rho_sites(run, geo, T, t_min, figdir)
+            plot_bond_rho(run, geo, T, t_min, figdir)
+            plot_bond_currents(run, geo, T, t_min, figdir)
+            plot_lead_currents(run, T, t_min, figdir)
 
 
 if __name__ == '__main__':

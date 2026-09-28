@@ -9,3 +9,4 @@ output/
 *.txt
 __pycache__/
 *.pyc
+*.mp4
