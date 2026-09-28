@@ -226,7 +226,7 @@ function write_spins_csv(c::Cfg, t, S_hist, idx)
             data[r, 1 + 3 * (m - 1) + a] = S_hist[a, m, i]
         end
     end
-    writedlm(joinpath(c.outdir, "spins_t.csv"), vcat(permutedims(hdr), Any.(data)), ",")
+    writedlm(joinpath(c.outdir, "spins_t.csv"), vcat(permutedims(hdr), data), ",")
 end
 
 "Corrientes de los leads, con el mismo signo y factor 1/2 que oscillators.jl."
@@ -238,7 +238,7 @@ function write_lead_csv(c::Cfg, obs, idx)
                       0.5 * obs.Iαx[1, 1, i], 0.5 * obs.Iαx[1, 2, i], 0.5 * obs.Iαx[1, 3, i],
                       -0.5 * obs.Iαx[2, 1, i], -0.5 * obs.Iαx[2, 2, i], -0.5 * obs.Iαx[2, 3, i]]
     end
-    writedlm(joinpath(c.outdir, "lead_currents_t.csv"), vcat(permutedims(hdr), Any.(data)), ",")
+    writedlm(joinpath(c.outdir, "lead_currents_t.csv"), vcat(permutedims(hdr), data), ",")
 end
 
 """
@@ -394,21 +394,55 @@ function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString,
     @printf("chequeos: max|ρ - ρ†| = %.2e   max|H_{n,n+1} - T̂| = %.2e\n", eh, eT)
     eT > 1e-10 && println("   AVISO: el hopping de TDNEGF no coincide con T̂ = -γσ0 - iγso σy")
 
-    # salidas
-    ckpt = joinpath(outdir, "checkpoint_t$(round(Int, t_final)).jld2")
-    S_final = [sys.dipoles[m, 1, 1, 1][a] for a in 1:3, m in 1:3]
-    jldsave(ckpt; u = collect(intg.u), t = intg.t, dipoles = S_final,
-            geometry = geometry(c), params = prep_params(c))
+    # salidas: primero fields.jld2 (de ahi se regenera todo lo demas con regen_csvs),
+    # luego el checkpoint y los CSV, cada uno aislado para que un fallo no tumbe al resto
     jldsave(joinpath(outdir, "fields.jld2");
             t = obs.t, spins = S_hist, sigma_i = obs.σx_i, n_i = obs.n_i,
             I_alpha = obs.Iα, I_alpha_x = obs.Iαx,
             t_rho = t_b, rho = rho_t, H0 = Matrix(H0),
             geometry = geometry(c), params = prep_params(c))
-    write_sites_csv(c, obs, idx_out)
-    write_spins_csv(c, obs.t, S_hist, idx_out)
-    write_lead_csv(c, obs, idx_out)
-    write_bond_csv(c, t_b, rho_t, H0, N_loc)
-    println("salidas: fields.jld2  checkpoint  geometry.csv  params.txt  sites_rho_t.csv  " *
-            "spins_t.csv  lead_currents_t.csv  bond_rho_t.csv  bond_H.csv")
+    try
+        ckpt = joinpath(outdir, "checkpoint_t$(round(Int, t_final)).jld2")
+        S_final = [sys.dipoles[m, 1, 1, 1][a] for a in 1:3, m in 1:3]
+        jldsave(ckpt; u = collect(intg.u), t = intg.t, dipoles = S_final,
+                geometry = geometry(c), params = prep_params(c))
+    catch e
+        println("AVISO: fallo el checkpoint: ", e)
+    end
+    write_csvs(c, obs, S_hist, t_b, rho_t, H0)
     return outdir
+end
+
+"Todos los CSV a partir de los arreglos de la corrida; cada uno aislado con try/catch."
+function write_csvs(c::Cfg, obs, S_hist, t_b, rho_t, H0)
+    idx = 1:OUT_STRIDE:length(obs.t)
+    for (nombre, f) in (("sites_rho_t.csv",     () -> write_sites_csv(c, obs, idx)),
+                        ("spins_t.csv",         () -> write_spins_csv(c, obs.t, S_hist, idx)),
+                        ("lead_currents_t.csv", () -> write_lead_csv(c, obs, idx)),
+                        ("bond_rho_t.csv",      () -> write_bond_csv(c, t_b, rho_t, H0, Nσ * N_orb)))
+        try
+            f()
+            println("  -> ", nombre)
+        catch e
+            println("AVISO: fallo ", nombre, ": ", e)
+        end
+    end
+end
+
+"""
+    regen_csvs(outdir)
+
+Reescribe todos los CSV de una corrida a partir de su fields.jld2, sin volver a
+correr la dinamica (p.ej. si fallo la escritura al final de la corrida).
+"""
+function regen_csvs(outdir::AbstractString)
+    jldopen(joinpath(outdir, "fields.jld2"), "r") do f
+        g, p = f["geometry"], f["params"]
+        c = Cfg(Symbol(g.setup), Symbol(g.axis), Tuple(Symbol.(g.roles)), g.N_BUF, g.Nx,
+                p.damping_dyn, outdir)
+        obs = (t = f["t"], σx_i = f["sigma_i"], n_i = f["n_i"], Iα = f["I_alpha"],
+               Iαx = f["I_alpha_x"])
+        println("regenerando CSV en ", outdir)
+        write_csvs(c, obs, f["spins"], f["t_rho"], f["rho"], f["H0"])
+    end
 end
