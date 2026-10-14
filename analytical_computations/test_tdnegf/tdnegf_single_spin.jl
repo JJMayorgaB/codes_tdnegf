@@ -57,7 +57,13 @@ const damping_dyn   = 0.05
 const kT            = 0.0
 
 # driving
-const PREC_SIGN = +1.0              
+const PREC_SIGN = +1.0
+# Eje de precesion del driver: "z" (defecto) o "y". Se elige con la variable de
+# entorno PREC_AXIS (p.ej. PREC_AXIS=y julia tdnegf_single_spin.jl). Con "y":
+#   M(t) = (sinθ sinφ, cosθ, sinθ cosφ),  φ = PREC_SIGN Ω (t - t_on),
+# la misma convencion que floquet_gf.jl / fully_analitical_inbedding_leads.jl.
+const PREC_AXIS = get(ENV, "PREC_AXIS", "z")
+PREC_AXIS in ("z", "y") || error("PREC_AXIS debe ser z o y (es \"$PREC_AXIS\")")
 const θ_max   = deg2rad(10.0)
 const Ω       = 0.005
 const T_drive = 2π / Ω             
@@ -73,7 +79,9 @@ const t_final = 20 * T_drive        # evolucion total             = 25132.7
 const OUT_STRIDE = 20     # Δt=0.1 -> Δt_out = 2.0  (628 puntos por periodo)
 
 @inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
-param_tag() = "single_gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))_buf$(N_BUF)"
+# el tag de la precesion en z no cambia (compatibilidad con corridas viejas)
+param_tag() = "single_gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg_Om$(fmtnum(Ω))_buf$(N_BUF)" *
+              (PREC_AXIS == "y" ? "_precy" : "")
 const OUT_RUN = joinpath(OUT, param_tag()); mkpath(OUT_RUN)
 
 # driving
@@ -82,6 +90,7 @@ const OUT_RUN = joinpath(OUT, param_tag()); mkpath(OUT_RUN)
 @inline function pumped_spin(t::Float64, t_on::Float64)
     θ = θ_max * smooth_switch(t - t_on, t_rise)
     φ = PREC_SIGN * Ω * (t - t_on)
+    PREC_AXIS == "y" && return SVector{3,Float64}(sin(θ) * sin(φ), cos(θ), sin(θ) * cos(φ))
     return SVector{3,Float64}(sin(θ) * cos(φ), sin(θ) * sin(φ), cos(θ))
 end
 
@@ -108,7 +117,8 @@ function init_spins()
     moments   = [1 => Moment(s = 1.0, g = 1.0)]
     sys = System(cryst, moments, :dipole; dims = (N_SPINS, 1, 1))
     for m in 1:N_SPINS
-        sys.dipoles[m, 1, 1, 1] = Sunny.SVector(0.0, 0.0, 1.0)
+        sys.dipoles[m, 1, 1, 1] = PREC_AXIS == "y" ? Sunny.SVector(0.0, 1.0, 0.0) :
+                                                     Sunny.SVector(0.0, 0.0, 1.0)
     end
     return sys
 end
@@ -270,6 +280,9 @@ function write_params_label()
         println(io, "Δt                    = ", Δt)
         println(io, "PREC_SIGN             = ", PREC_SIGN,
                     "   (+1 = mismo sentido de precesion que el analitico)")
+        println(io, "PREC_AXIS             = ", PREC_AXIS,
+                    PREC_AXIS == "y" ? "   M(t) = (sinθ sinφ, cosθ, sinθ cosφ)" :
+                                       "   M(t) = (sinθ cosφ, sinθ sinφ, cosθ)")
         println(io, "")
         println(io, "t_leads = ", t_leads, "   t_on_g3 = ", t_on_g3,
                     "   t_rise = ", t_rise, "   t_final = ", t_final)
@@ -411,8 +424,8 @@ function main()
     println("="^72)
     @printf("Nx=%d  espin en el sitio %d  N_BUF=%d  γ=%.4f  γso=%.4f\n",
             Nx, SITE_C, N_BUF, γ, γso)
-    @printf("j_sd=%.3f  θmax=%.2f°  Ω=%.4f  (T=%.1f)  E_F=%.2f  β=%.1f\n",
-            j_sd, rad2deg(θ_max), Ω, T_drive, E_F, β)
+    @printf("j_sd=%.3f  θmax=%.2f°  Ω=%.4f  (T=%.1f)  E_F=%.2f  β=%.1f  precesion en %s\n",
+            j_sd, rad2deg(θ_max), Ω, T_drive, E_F, β, PREC_AXIS)
     @printf("sitios de lead observables: n=0..%d por lado\n", N_LEAD_OUT)
     @printf("  lead R -> sitios TDNEGF %d..%d\n", SITE_C+1, SITE_C+1+N_LEAD_OUT)
     @printf("  lead L -> sitios TDNEGF %d..%d\n", SITE_C-1, SITE_C-1-N_LEAD_OUT)
