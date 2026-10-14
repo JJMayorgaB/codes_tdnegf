@@ -13,6 +13,15 @@ const σy = ComplexF64[0 -im; im 0]
 const σz = ComplexF64[1 0; 0 -1]
 const σp = (σx + im*σy) / 2      # σ₊
 const σm = (σx - im*σy) / 2      # σ₋
+const τp = (σz + im*σx) / 2      # τ₊  (escalera de σy)
+const τm = (σz - im*σx) / 2      # τ₋
+
+# Eje de precesion del espin manejado: "z" (defecto) o "y". La base de espin
+# sigue siendo la de σz (σx, σy, σz), solo cambian los armonicos del drive:
+#   z:  σ·M(t) = cosθ σz + sinθ (e^{-iΩt} σ₊ + e^{iΩt} σ₋)
+#   y:  σ·M(t) = sinθ sinΩt σx + cosθ σy + sinθ cosΩt σz
+#            = cosθ σy + sinθ (e^{-iΩt} τ₊ + e^{iΩt} τ₋)
+const PREC_AXIS = Ref("z")
 
 # parametros
 #
@@ -69,9 +78,11 @@ El signo +J_sd M̌ corresponde a H_sd = -J_sd σ·M (convenio TDNEGF).
 function floquet_matrix(ω::Real, p::FloquetParams; η::Real)
     nf  = n_floquet(p)
     A   = zeros(ComplexF64, 2nf, 2nf)
-    M0  = p.J_sd * cos(p.θ) * σz
-    Mp1 = p.J_sd * sin(p.θ) * σm     # M̂₊₁
-    Mm1 = p.J_sd * sin(p.θ) * σp     # M̂₋₁
+    PREC_AXIS[] in ("z", "y") || error("PREC_AXIS debe ser \"z\" o \"y\"")
+    ax, lo, up = PREC_AXIS[] == "z" ? (σz, σm, σp) : (σy, τm, τp)
+    M0  = p.J_sd * cos(p.θ) * ax     # bloque (n,n)
+    Mp1 = p.J_sd * sin(p.θ) * lo     # bloque (n,n+1)  [σ₋ o τ₋]
+    Mm1 = p.J_sd * sin(p.θ) * up     # bloque (n,n-1)  [σ₊ o τ₊]
     for n in -p.N:p.N
         r  = fblock(fidx(n, p))
         ωn = ω + n * p.Ω
@@ -118,11 +129,18 @@ function sector2x2(ω::Real, n::Int, p::FloquetParams; η::Real)
                        Js              d(ω + (n+1)*p.Ω)+Jc]
 end
 
-"Bloque Ǧʳ₀₀ en forma cerrada."
+"""
+Bloque Ǧʳ₀₀ en forma cerrada. Los sectores 2x2 estan escritos para la
+precesion en z; para la precesion en y se rota con W = (σ₀ + i(σx+σy+σz))/2,
+que cumple W σz W† = σy y W σ± W† = τ±, de modo que Ǧʳ(y) = W Ǧʳ(z) W†.
+"""
 function G00_exact(ω::Real, p::FloquetParams; η::Real)
     up = inv(sector2x2(ω, -1, p; η = η))[2, 2]   # |0,↑⟩ es el 2º del sector n=-1
     dn = inv(sector2x2(ω,  0, p; η = η))[1, 1]   # |0,↓⟩ es el 1º del sector n=0
-    return ComplexF64[up 0; 0 dn]
+    Gz = ComplexF64[up 0; 0 dn]
+    PREC_AXIS[] == "z" && return Gz
+    W = (σ0 + im * (σx + σy + σz)) / 2
+    return W * Gz * adjoint(W)
 end
 
 # observables
@@ -227,8 +245,8 @@ end
 function validate(p::FloquetParams = FloquetParams(); η::Real = 2e-3)
     ok(b) = b ? "OK" : "FALLA"
     println("="^72)
-    @printf("t=%.3f  λ=%.3f  J_sd=%.3f  θ=%.1f°  Ω=%.4f  β=%.1f  N=%d\n",
-            p.t, p.λ, p.J_sd, rad2deg(p.θ), p.Ω, p.β, p.N)
+    @printf("t=%.3f  λ=%.3f  J_sd=%.3f  θ=%.1f°  Ω=%.4f  β=%.1f  N=%d  precesion en %s\n",
+            p.t, p.λ, p.J_sd, rad2deg(p.θ), p.Ω, p.β, p.N, PREC_AXIS[])
     @printf("γ=%.6f   banda=[%.4f, %.4f]   Γ(0)=%.4f   Γ/Ω=%.1f\n",
             γ_band(p), -2γ_band(p), 2γ_band(p), Γ_lead(0.0, p; η = η),
             Γ_lead(0.0, p; η = η) / p.Ω)
@@ -257,7 +275,8 @@ function validate(p::FloquetParams = FloquetParams(); η::Real = 2e-3)
     pz = FloquetParams(; θ = 0.0, N = p.N)
     G  = Gr_C(ω, pz; η = η)
     ed = maximum(maximum(abs.(fget(G, n, n, pz) -
-            inv((ω + n*pz.Ω - Σr(ω + n*pz.Ω, pz; η=η)) * σ0 + pz.J_sd * σz)))
+            inv((ω + n*pz.Ω - Σr(ω + n*pz.Ω, pz; η=η)) * σ0 +
+                pz.J_sd * (PREC_AXIS[] == "z" ? σz : σy))))
                  for n in -pz.N:pz.N)
     @printf("3. θ=0:     |diag - analitico 2x2| = %.2e  [%s]\n", ed, ok(ed < 1e-12))
 
@@ -350,6 +369,7 @@ function sweep(p::FloquetParams = FloquetParams();
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
+    PREC_AXIS[] = get(ENV, "PREC_AXIS", "z")     # PREC_AXIS=y julia floquet_gf.jl
     p = FloquetParams()
     validate(p)
     println()
