@@ -334,9 +334,14 @@ function validate(p::AParams = AParams(); η::Real = 2e-3)
         @printf("     ⟨σ^α⟩ sitio %d :  %.1e [%s]\n", m, val(e), ok(val(e) < 1e-10))
     end
     ca, cn = current_harmonics(ρa, p), current_harmonics(ρn, p)
+    # La corriente de carga es nula (~1e-17, ruido): su error relativo a si misma no
+    # tiene sentido, asi que se normaliza con la escala de las corrientes de espin.
+    escS = maximum(abs(cn[k][c]) for k in -1:1, c in 2:4)
     for (c, lab) in enumerate(("I (carga)", "I^Sx", "I^Sy", "I^Sz"))
         e = Err(); for k in -1:1; add!(e, ca[k][c], cn[k][c]); end
-        @printf("     %-10s enlace 1->2 :  %.1e [%s]\n", lab, val(e), ok(val(e) < 1e-10))
+        ε = c == 1 ? e.d / max(escS, 1e-300) : val(e)
+        @printf("     %-10s enlace 1->2 :  %.1e [%s]%s\n", lab, ε, ok(ε < 1e-10),
+                c == 1 ? "   (|I| ≤ $(round(e.s, sigdigits = 2)); relativo a la escala de I^S)" : "")
     end
 
     # 6. hermiticidad ρ_{mn,-k} = (ρ_{nm,k})†
