@@ -2,7 +2,8 @@
 #=
 llg_elements.jl -- elementos de intercambio y damping de la LLG efectiva en el
 marco rotante a partir de χ̌_{ij,k}(0) e i∂_ωχ̌_{ij,k}(0) (kernel_chi0_<pares>.csv,
-escrito por kernel_elements.jl --kernel).
+escrito por kernel_elements.jl --chi0; tambien sirve el resumen
+kernel_chi0_kernel_<pares>.csv de --kernel, y entonces la salida lleva _kernel_ en el nombre).
 
 Usa χ̌_{-k}(0) = [χ̌_k(0)]* e i∂_ωχ̌_{-k}(0) = [i∂_ωχ̌_k(0)]*, con lo que las
 formulas de la seccion quedan:
@@ -30,7 +31,8 @@ Escribe en la carpeta del CSV:
     llg_elements_SA_<label>.csv  i<j: partes simetrica (S) y antisimetrica (A) en sitio
 
 Uso:
-    julia llg_elements.jl                                   # sites1-10 si existe, si no 1,1;1,2;2,1;2,2
+    julia llg_elements.jl                                   # output/setup2_gso0p1_jsd0p2_th10deg_Om0p005/data:
+                                                            # sites1-10 si existe, si no 1,1;1,2;2,1;2,2
     julia llg_elements.jl RUTA/kernel_chi0_sites1-10.csv [--g 1.0] [--configs "1,2;3,6;5,9"]
 =#
 
@@ -110,6 +112,10 @@ function read_meta(path::AbstractString)
     head = first(eachline(path))
     d = Dict(String(a) => parse(Float64, b) for (a, b) in
              (split(kv, '=') for kv in split(lstrip(head, '#')) if occursin('=', kv)))
+    # chi_sign=1: prefactor +i J_sd. Sin esa clave el CSV es del prefactor viejo -i J_sd
+    get(d, "chi_sign", 0.0) == 1.0 ||
+        error("$path: kernel con el signo viejo (-i J_sd); corrigelo antes con " *
+              "python fix_kernel_sign.py --tag <tag>")
     return d["J_sd"], d["Omega"]
 end
 

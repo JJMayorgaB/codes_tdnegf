@@ -22,6 +22,10 @@ todo el amortiguamiento de los F sale de su acople con los electrones.
 
 Parametros fisicos y protocolo: los de analytical_computations/test_tdnegf/
 tdnegf_single_spin.jl (comparables con el Floquet analitico y el kernel).
+Protocolo: leads encendidos suavemente en t_leads; relajacion con damping hasta
+t_on = 5 (2π/0.005) ≈ 6283 para TODO Ω (la fija el ancho de banda de los leads,
+no el driver); luego rampa del cono (t_rise) y 15 periodos de driver:
+t_final = t_on + 15 T. Con Ω = 0.005 es lo mismo que antes (t_on = 5T, t_final = 20T).
 Variables de entorno: GSO, JSD, THETA (grados), OMEGA y FPOS.
 
 Salida: <outroot>/<disposicion>/<separacion>/<param_tag>/, p. ej.
@@ -67,10 +71,12 @@ const θ_max   = deg2rad(parse(Float64, get(ENV, "THETA", "10")))   # grados
 const Ω       = parse(Float64, get(ENV, "OMEGA", "0.005"))
 const T_drive = 2π / Ω
 const t_leads = 630.0                # encendido suave del acople a los leads
-const t_on    = 5 * T_drive          # arranca el driver
+# la relajacion la fija el ancho de banda de los leads, no el driver: t_on es el
+# mismo para todo Ω (el de Ω = 0.005) y despues siempre hay 15 periodos de driver
+const t_on    = 5 * (2π / 0.005)     # arranca el driver
 const t_rise  = 630.0                # rampa del angulo del cono
 const t_relax = t_on
-const t_final = 20 * T_drive
+const t_final = t_on + 15 * T_drive
 
 # salida: CSV cada OUT_STRIDE pasos (Δt_out = 2.0, ~628 puntos por periodo)
 const OUT_STRIDE = 20

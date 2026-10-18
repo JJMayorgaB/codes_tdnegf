@@ -15,7 +15,7 @@ cada termino de χ es un producto de dos sumas finitas en el mismo punto:
 (la fase e^{ik'Ωτ} sale de que G^<_ji(t',t) tiene su primer argumento en
 t' = t - τ). Agrupando por la potencia de e^{-iΩt}:
 
-  χ_k(τ) = -i J_sd Tr_σ σ^μ [ Σ_{k1-k2=k} 𝒢^<_{k1} σ^ν 𝒢^{r†}_{k2}
+  χ_k(τ) = +i J_sd Tr_σ σ^μ [ Σ_{k1-k2=k} 𝒢^<_{k1} σ^ν 𝒢^{r†}_{k2}
                             + Σ_{k1+k2=k} e^{ik2Ωτ} 𝒢^r_{k1} σ^ν 𝒢^{<,ji}_{k2}(-τ) ]
 
 Es exactamente la cuenta de time_kernel.jl en otro orden (primero se
@@ -85,7 +85,7 @@ function chi_harmonics(H4, τs, p, pairs, hidx, mns, K)
                     acc[k1 + k2 + KK + 1] += cis(k2 * Ω * τ) * (Gr[a] * Sn * Glq[b])
                 end
                 for kc in 1:nkc
-                    X[it, kc, q] = -im * Jsd * tr2(Sm * acc[kc])
+                    X[it, kc, q] = im * Jsd * tr2(Sm * acc[kc])     # +i J_sd
                 end
             end
         end

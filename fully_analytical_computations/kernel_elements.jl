@@ -39,8 +39,9 @@ Uso desde la linea de comandos (lo llama plot_kernel_elements.py):
           [--k-nomega 40] [--k-eta η] [--k-wide 6.0] [--k-nwide 1601] [--k-narrow 2.5]
           [--k-margin 2.0] [--datadir DIR]
       dω = Ω/nomega, η (defecto 5dω); ventana ancha ±wide γ̃ con nwide puntos y
-      estrecha ±narrow Ω con paso dω. Escribe kernel_chi_m{i}n{j}.csv y
-      kernel_chi0_<pares>.csv (χ̌(0), i∂_ωχ̌(0)) en DIR (defecto output/<tag>/data).
+      estrecha ±narrow Ω con paso dω. Escribe kernel_chi_m{i}n{j}.csv y el resumen
+      kernel_chi0_kernel_<pares>.csv (χ̌(0), i∂_ωχ̌(0)) en DIR (defecto output/<tag>/data).
+      (el kernel_chi0_<pares>.csv que lee llg_elements.jl lo escribe --chi0)
     julia -t auto kernel_elements.jl --tau --pairs "1,1"     # kernel en tiempo χ̌_k(τ)
           [--t-dtau 0.1] [--t-taumax T] [--t-log2n 22] [--t-eta 5e-5] [--datadir DIR]
       FFT de los armonicos analiticos (ω ∈ [-π/dτ, π/dτ), N = 2^log2n) y producto en τ.
@@ -355,7 +356,12 @@ end
 #=
 Componentes independientes del kernel (seccion "Kernel Floquet harmonics"):
 
-    χ̌_{ij,k}(ω) = -i J_sd ∫dω'/2π  Σ 𝒯_{ab}(ω,ω'),   𝒯 = f(armonicos_ij(ω+ω'+bΩ), armonicos_ji(ω'))
+    χ̌_{ij,k}(ω) = +i J_sd ∫dω'/2π  Σ 𝒯_{ab}(ω,ω'),   𝒯 = f(armonicos_ij(ω+ω'+bΩ), armonicos_ji(ω'))
+
+El prefactor es +i J_sd: ⟨σ⟩ = -i Tr[σ 𝒢^<] y, a primer orden, 𝒢^< = G^< - J_sd ∫[...],
+asi que δ⟨σ⟩ = (+i J_sd) Tr[...] (respuesta fisica: χ_mm(0) > 0 on-site). Los CSV del
+kernel llevan chi_sign=1 en el encabezado; los que no lo tienen se calcularon con el
+prefactor viejo -i J_sd y se corrigen con fix_kernel_sign.py.
 
 con las 10 cantidades auxiliares 𝒯. Malla: ω' = q dω con dω = Ω/nΩ (nΩ entero),
 asi que ω+ω'+bΩ cae en la malla si ω = s dω: todo son desplazamientos de indice,
@@ -472,7 +478,7 @@ function kernel_chi(i::Int, j::Int, p::KParams, c::KernelConfig; svals::Abstract
     qmin = jmin + smin - nΩ; qmax = jmax + smax + nΩ          # ω+ω'+bΩ
     Vij, Dij = coeff_table(qmin:qmax, dω, i, j, p; η = η, withder = true)
     Vji, _   = coeff_table(jmin:jmax, dω, j, i, p; η = η, withder = false)
-    pre  = -im * p.J_sd * dω / (2π)
+    pre  = im * p.J_sd * dω / (2π)                       # +i J_sd
     χ    = zeros(ComplexF64, length(svals), 6)
     iχp  = zeros(ComplexF64, length(svals), 6)
     kernel_point!(χ, iχp, 1, svals[1], Vij, Dij, Vji, jmin, jmax, qmin, nΩ, pre)   # compila en el hilo principal
@@ -514,7 +520,7 @@ function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString,
     sw, sn = kernel_windows(p, c)
     svals = sort(unique(vcat(sw, sn)))
     pos = Dict(s => k for (k, s) in enumerate(svals))
-    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g nOmega=%d wide=%.15g nwide=%d narrow=%.15g margin=%.15g\n",
+    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g nOmega=%d wide=%.15g nwide=%d narrow=%.15g margin=%.15g chi_sign=1\n",
                     p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, η, c.nΩ, c.wide, c.nwide, c.narrow, c.margin)
     rows0 = String[]
     @printf("kernel: dω=%.3e (Ω/%d)  η=%.3e  ventana ancha ±%.2f γ̃ (%d pts)  estrecha ±%.2f Ω (%d pts)\n",
@@ -569,7 +575,7 @@ el mismo formato que kernel_run (lo lee llg_elements.jl).
 function chi0_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString, label::AbstractString)
     mkpath(datadir)
     dω = kdω(p, c); η = keta(p, c)
-    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g nOmega=%d wide=0 nwide=1 narrow=0 margin=%.15g\n",
+    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g nOmega=%d wide=0 nwide=1 narrow=0 margin=%.15g chi_sign=1\n",
                     p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, η, c.nΩ, c.margin)
     @printf("kernel χ̌(0): dω=%.3e (Ω/%d)  η=%.3e  margen=%.2f  |  %d pares\n", dω, c.nΩ, η, c.margin, length(pairs))
     rows = String[]
@@ -605,7 +611,7 @@ Kernel en tiempo, τ = t - t':
 
 La convolucion en ω' de las 𝒯(ω,ω') es un producto en τ:
 
-    χ̌_k(τ) = -i J_sd Σ_{a+b=k} 𝒯_{ab}(τ),
+    χ̌_k(τ) = +i J_sd Σ_{a+b=k} 𝒯_{ab}(τ),
     𝒯_{ab}(τ) = 𝒯_{ab}[escalares_ij(τ), escalares_ji(-τ)] · e^{ibΩτ}
 
 con los escalares en τ dados por  x(τ) = ∫dω/2π e^{-iωτ} x(ω).  Esa transformada
@@ -728,7 +734,7 @@ function kernel_tau(i::Int, j::Int, p::KParams, c::TauConfig)
     nt = 2Nτ + 1
     τs = [(n - Nτ - 1) * c.dτ for n in 1:nt]
     χ  = zeros(ComplexF64, nt, 6)
-    pre = -im * p.J_sd
+    pre = im * p.J_sd                                          # +i J_sd
     for r in 1:nt
         τ  = τs[r]
         X  = Aij[:, r]
@@ -749,7 +755,7 @@ las comprobaciones: causalidad (χ̌(τ<0) ≈ 0) y realidad de k = 0 (Im ≈ 0)
 function tau_run(pairs, p::KParams, c::TauConfig, datadir::AbstractString)
     mkpath(datadir)
     τmax = tmaxof(p, c); N = 2^c.log2N; Δω = 2π / (N * c.dτ)
-    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g dtau=%.15g taumax=%.15g log2N=%d\n",
+    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g dtau=%.15g taumax=%.15g log2N=%d chi_sign=1\n",
                     p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, c.η, c.dτ, τmax, c.log2N)
     @printf("kernel(τ): dτ=%.3g  τmax=%.1f (T=%.1f)  N=2^%d  Δω=%.2e  ω∈[%.1f,%.1f)  η=%.1e  ηP=%.1f\n",
             c.dτ, τmax, 2π / p.Ω, c.log2N, Δω, -π / c.dτ, π / c.dτ, c.η, c.η * N * c.dτ)
@@ -897,11 +903,11 @@ with(p::KParams; kw...) = KParams(; (f => get(kw, f, getfield(p, f)) for f in fi
 
 """
 Etiqueta a partir de la carpeta de la corrida de TDNEGF, sin los campos que solo
-tienen sentido alli (buf.., adyn..):  setup2_..._Om0p005_buf4_adyn0p0 -> setup2_..._Om0p005
+tienen sentido alli (buf.., adyn..). En la estructura nueva se antepone setup2_ (DFF)
+o setup1_ (FDF), para que el tag sea el mismo que con el nombre viejo:
+    .../y_precession/output/DFF/F1-2/gso0p1_..._Om0p005_buf4_adyn0p0 -> setup2_gso0p1_..._Om0p005
+    .../y_precession/output/setup2_gso0p1_..._Om0p005_buf4_adyn0p0  -> setup2_gso0p1_..._Om0p005
 """
-# carpeta de la corrida sin buf.. ni adyn..; en la estructura nueva
-# (<eje>_precession/output/DFF/F../<tag>) se antepone setup2_ (DFF) o setup1_ (FDF),
-# para que el tag sea el mismo que con el nombre viejo setup2_<tag>
 function run_tag(params::AbstractString)
     d = dirname(abspath(params))
     tag = join(filter(t -> !startswith(t, "buf") && !startswith(t, "adyn"),

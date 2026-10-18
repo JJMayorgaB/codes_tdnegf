@@ -5,8 +5,9 @@ de dos osciladores (TDNEGF con LMMs), en una ventana de tiempo ya estacionaria.
 
 Figuras (jpg, svg, pdf) en <corrida>/figures/ (carpeta que ya existe), cada una
 en dos versiones, eje y logaritmico (_log) y lineal (_lin):
-    psd_spin_density_<a>-<b>T_<esc>   1x3: PSD de <sigma^alpha>_i en los sitios de D, F, F
-    psd_lmm_<a>-<b>T_<esc>            1x3: PSD de M^alpha de los tres LMMs (D, F, F)
+    psd_spin_density_<a>-<b>T_<esc>   1x3: PSD de <sigma^alpha>_i en los sitios de los 3 LMMs
+                                      (de izquierda a derecha: D F F en DFF, F D F en FDF)
+    psd_lmm_<a>-<b>T_<esc>            1x3: PSD de M^alpha de los tres LMMs (mismo orden)
     psd_lead_currents_<a>-<b>T_<esc>  1x2: PSD de las corrientes de espin en el lead L y en el R
     psd_bond_<i>-<j>_<a>-<b>T_<esc>   1x1: PSD de las corrientes de espin del enlace i -> j (F -> F),
                                       solo si los F son primeros vecinos (DFF/F1-2)
@@ -17,8 +18,9 @@ grande) va en un eje derecho propio, en verde, para no aplastar a x y z.
 PSD:  P(omega) = | sum_n w_n x_n e^{i omega t_n} |^2 / (sum_n w_n)^2
 con ventana de Hann w_n (o rectangular con --window rect). Con esta normalizacion
 una senal A cos(omega0 t) da un pico de altura (A/2)^2 en omega0 y una constante
-c da c^2 en omega = 0. La ventana de tiempo [a, b) en periodos del driver
-(por defecto [10, 20)) tiene un numero entero de periodos, asi que los armonicos
+c da c^2 en omega = 0. La ventana de tiempo [a, b) en periodos del driver, contados
+desde t = 0 (por defecto los ultimos 10 periodos de la corrida: [10, 20) con Ω = 0.005,
+[25, 35) con Ω = 0.02 y el t_on actual), tiene un numero entero de periodos, asi que los armonicos
 n Omega caen sobre la malla de frecuencias; resolucion Omega / (b - a). El
 relleno con ceros (--pad) solo suaviza el dibujo de los picos.
 
@@ -181,8 +183,9 @@ def figura_paneles(paneles, titulos, ylabels, escala, wmax, figdir, nombre,
 def main():
     ap = argparse.ArgumentParser(description='PSD (|FT|^2) de una corrida de los setups.')
     ap.add_argument('run')
-    ap.add_argument('--t-start', type=float, default=10.0, help='inicio de la ventana (periodos)')
-    ap.add_argument('--t-end', type=float, default=20.0, help='fin de la ventana (periodos)')
+    ap.add_argument('--t-start', type=float, default=None,
+                    help='inicio de la ventana (periodos; defecto: t_final/T - 10)')
+    ap.add_argument('--t-end', type=float, default=None, help='fin de la ventana (periodos; defecto: t_final/T)')
     ap.add_argument('--wmax', type=float, default=3.0, help='omega/Omega maximo')
     ap.add_argument('--window', choices=['hann', 'rect'], default='hann')
     ap.add_argument('--pad', type=int, default=8, help='factor de relleno con ceros (solo dibujo)')
@@ -191,7 +194,10 @@ def main():
     run = os.path.abspath(args.run)
     geo, Omega = leer_corrida(run)
     T = 2 * np.pi / Omega
-    a, b = args.t_start, args.t_end
+    txt = open(os.path.join(run, 'params.txt'), encoding='utf-8').read()
+    nT = round(float(re.search(r't_final = ([0-9.eE+-]+)', txt).group(1)) / T)   # periodos totales
+    b = args.t_end if args.t_end is not None else float(nT)
+    a = args.t_start if args.t_start is not None else b - 10.0
     figdir = os.path.join(run, 'figures')
     os.makedirs(figdir, exist_ok=True)
     tag = f'{a:g}-{b:g}T'

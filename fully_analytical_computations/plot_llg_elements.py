@@ -174,6 +174,9 @@ def main():
     K.need(os.path.isfile(fl), fl,
            f'julia kernel_elements.jl ... --chi0 --sites {N}  y  julia llg_elements.jl '
            f'output/{tag}/data/kernel_chi0_sites1-{N}.csv  (ver run_cluster.sh)')
+    src = os.path.join(datadir, f'kernel_chi0_sites1-{N}.csv')
+    K.need(K.sign_ok([src]), f'{fl} (y {os.path.basename(src)}) con el signo viejo (-i J_sd)',
+           f'python fix_kernel_sign.py --tag {tag}   (en local, sin recalcular)')
     print(f'output/{tag}   |   {N}x{N} pares   |   formatos {K.FORMATS}')
     X = load(fl, N)
     fs = [int(s) for s in args.fsites.split(',') if s.strip()]

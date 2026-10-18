@@ -3,7 +3,7 @@
 time_kernel.jl -- kernel temporal de dos tiempos del sector electronico
 inbebido en el lead,
 
-  χ^{μν}_{ij}(t,t') = -i J_sd Tr_σ[ σ̂^μ ( G^<_{ij}(t,t') σ̂^ν G^a_{ji}(t',t)
+  χ^{μν}_{ij}(t,t') = +i J_sd Tr_σ[ σ̂^μ ( G^<_{ij}(t,t') σ̂^ν G^a_{ji}(t',t)
                                         + G^r_{ij}(t,t') σ̂^ν G^<_{ji}(t',t) ) ]
 
 para los pares (i,j) de sitios de UN lead, (t,t') ∈ [0, P·T]².
@@ -741,8 +741,8 @@ function main(argv = ARGS)
                     msh = max(msh, maxabs(Gl))
                     for q in 1:nmn
                         Sm, Sn = Smu[q], Snu[q]
-                        x  = -im * Jsd * tr2(Sm * (Gl * Sn * Ga + Gr * Sn * Glq))
-                        x2 = -im * Jsd * tr2(Sm * (Gl2 * Sn * Ga2 + Gr2 * Sn * Glq2))
+                        x  = im * Jsd * tr2(Sm * (Gl * Sn * Ga + Gr * Sn * Glq))
+                        x2 = im * Jsd * tr2(Sm * (Gl2 * Sn * Ga2 + Gr2 * Sn * Glq2))
                         χ[a, b, q] = x
                         ax = abs(x)
                         st[q, 1] = max(st[q, 1], ax)

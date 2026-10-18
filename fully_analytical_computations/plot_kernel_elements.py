@@ -134,6 +134,16 @@ def grid_matches(path, pairs, wmin, wmax, nw, eta, vals):
     return len(w) == nw and np.isclose(w[0], wmin) and np.isclose(w[-1], wmax)
 
 
+def sign_ok(paths):
+    """True si todos los CSV del kernel tienen chi_sign=1 (prefactor +i J_sd)."""
+    for p in paths:
+        if os.path.isfile(p):
+            with open(p) as fh:
+                if 'chi_sign=1' not in fh.readline().split():
+                    return False
+    return True
+
+
 def need(ok, what, hint):
     """Sin Julia en local: si falta un CSV (o no coincide), se detiene explicando como generarlo."""
     if not ok:
@@ -640,6 +650,9 @@ def main():
     if args.what in ('all', 'kernel'):
         need(kernel_matches(datadir, pairs, vals, kernel_cfg(args, vals)), f'kernel_chi_m*n*.csv en {datadir}',
              f'julia kernel_elements.jl {hint_p} --kernel {label}')
+        need(sign_ok([os.path.join(datadir, f'kernel_chi_m{m}n{n}.csv') for m, n in pairs]),
+             f'kernel_chi_m*n*.csv en {datadir} con el signo viejo (-i J_sd)',
+             f'python fix_kernel_sign.py --tag {tag}   (en local, sin recalcular)')
         for m, n in pairs:
             plot_kernel(datadir, figdir, m, n, vals, args.k_xlim)
         for (a, b) in configs:
@@ -648,6 +661,9 @@ def main():
     if args.what in ('all', 'tau'):
         need(tau_matches(datadir, pairs, vals, tau_cfg(args, vals)), f'kernel_tau_m*n*.csv en {datadir}',
              f'julia kernel_elements.jl {hint_p} --tau {label}')
+        need(sign_ok([os.path.join(datadir, f'kernel_tau_m{m}n{n}.csv') for m, n in pairs]),
+             f'kernel_tau_m*n*.csv en {datadir} con el signo viejo (-i J_sd)',
+             f'python fix_kernel_sign.py --tag {tag}   (en local, sin recalcular)')
         plot_tau(datadir, figdir, pairs, args.t_plot, configs)
         plot_tmaps(datadir, figdir, pairs, vals, args.t_plot, args.t_npix, configs)
 
