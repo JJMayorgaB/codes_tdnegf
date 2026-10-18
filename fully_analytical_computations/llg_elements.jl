@@ -1,0 +1,186 @@
+#!/usr/bin/env julia
+#=
+llg_elements.jl -- elementos de intercambio y damping de la LLG efectiva en el
+marco rotante a partir de χ̌_{ij,k}(0) e i∂_ωχ̌_{ij,k}(0) (kernel_chi0_<pares>.csv,
+escrito por kernel_elements.jl --kernel).
+
+Usa χ̌_{-k}(0) = [χ̌_k(0)]* e i∂_ωχ̌_{-k}(0) = [i∂_ωχ̌_k(0)]*, con lo que las
+formulas de la seccion quedan:
+
+  intercambio (con χ̌ = χ̌_k(0)):
+    J      = (2 xx0 + yy0)/3
+    Γ^xx   = (xx0 - yy0)/3 + 2 Re xx2      Γ^yy = -2(xx0 - yy0)/3
+    Γ^zz   = (xx0 - yy0)/3 - 2 Re xx2      Γ^xz = 2 Im xx2
+    Γ^xy   = Re xy1 + Re yx1               Γ^yz = Im xy1 + Im yx1
+    t^x    = Im yx1 - Im xy1               t^y  = -xz0        t^z = Re xy1 - Re yx1
+  damping: lo mismo con χ̌ -> i∂_ωχ̌ (α, Λ, r en lugar de J, Γ, t).
+
+Imprime, por par, los 9 + 9 elementos; para (1,2) y (2,1) su parte simetrica y
+antisimetrica en sitio; y la lista de todos ordenada por magnitud, con su escala
+en la LLG (J_sd y Ω se leen del encabezado del CSV):
+    intercambio (reactivo):  g J_sd |X| / Ω   (frecuencia frente a la del marco rotante)
+    damping (multiplica D_t m, adimensional como un Gilbert):  g J_sd |X|
+Escribe llg_elements_<pares>.csv junto al archivo de entrada.
+
+Uso:
+    julia llg_elements.jl                          # setup2, pares 1,1;1,2;2,1;2,2, g = 1
+    julia llg_elements.jl RUTA/kernel_chi0_<pares>.csv [--g 1.0]
+=#
+
+using Printf
+
+const DEFAULT_FILE = joinpath(@__DIR__, "output", "setup2_gso0p1_jsd0p2_th10deg_Om0p005", "data",
+                              "kernel_chi0_1-1_1-2_2-1_2-2.csv")
+
+const NAMES_A = ("J", "Γxx", "Γyy", "Γzz", "Γxz", "Γxy", "Γyz", "tx", "ty", "tz")
+const NAMES_D = ("α", "Λxx", "Λyy", "Λzz", "Λxz", "Λxy", "Λyz", "rx", "ry", "rz")
+
+"Lee el CSV: Dict((m,n) => Dict(comp => (χ̌(0), i∂χ̌(0))))."
+function read_chi0(path::AbstractString)
+    data = Dict{Tuple{Int,Int},Dict{String,Tuple{ComplexF64,ComplexF64}}}()
+    pairs = Tuple{Int,Int}[]
+    for line in eachline(path)
+        (startswith(line, "#") || startswith(line, "m,")) && continue
+        f = split(strip(line), ',')
+        length(f) == 7 || continue
+        m, n = parse(Int, f[1]), parse(Int, f[2])
+        v = parse.(Float64, f[4:7])
+        haskey(data, (m, n)) || (data[(m, n)] = Dict{String,Tuple{ComplexF64,ComplexF64}}(); push!(pairs, (m, n)))
+        data[(m, n)][String(f[3])] = (complex(v[1], v[2]), complex(v[3], v[4]))
+    end
+    return data, pairs
+end
+
+"""
+Los 10 elementos (J o α, Γ o Λ (6), t o r (3)) a partir de los armonicos k ≥ 0
+x = Dict(comp => valor) (χ̌_k(0) o i∂χ̌_k(0)). Devuelve tambien la parte
+imaginaria de los k = 0 (deberia ser ≈ 0).
+"""
+function elements(x)
+    xx0, yy0, xz0 = x["xx0"], x["yy0"], x["xz0"]
+    xy1, yx1, xx2 = x["xy1"], x["yx1"], x["xx2"]
+    a, b, c = real(xx0), real(yy0), real(xz0)
+    J   = (2a + b) / 3
+    Γxx = (a - b) / 3 + 2real(xx2)
+    Γyy = -2(a - b) / 3
+    Γzz = (a - b) / 3 - 2real(xx2)
+    Γxz = 2imag(xx2)
+    Γxy = real(xy1) + real(yx1)
+    Γyz = imag(xy1) + imag(yx1)
+    tx  = imag(yx1) - imag(xy1)
+    ty  = -c
+    tz  = real(xy1) - real(yx1)
+    imk0 = maximum(abs.(imag.((xx0, yy0, xz0))))
+    return (J, Γxx, Γyy, Γzz, Γxz, Γxy, Γyz, tx, ty, tz), imk0
+end
+
+"Matriz 3x3 en el marco rotante a partir de los 10 elementos (J δ + Γ + ε t)."
+function tensor(e)
+    J, Γxx, Γyy, Γzz, Γxz, Γxy, Γyz, tx, ty, tz = e
+    return [J+Γxx  Γxy+tz  Γxz-ty;
+            Γxy-tz J+Γyy   Γyz+tx;
+            Γxz+ty Γyz-tx  J+Γzz]
+end
+
+function show_block(title, names, e)
+    println("    ", title)
+    for (nm, v) in zip(names, e)
+        @printf("      %-4s = %+.6e\n", nm, v)
+    end
+end
+
+function show_matrix(title, M)
+    println("    ", title)
+    for r in 1:3
+        @printf("      [% .6e  % .6e  % .6e]\n", M[r, 1], M[r, 2], M[r, 3])
+    end
+end
+
+"J_sd y Ω del encabezado (# clave=valor ...) del CSV."
+function read_meta(path::AbstractString)
+    head = first(eachline(path))
+    d = Dict(String(a) => parse(Float64, b) for (a, b) in
+             (split(kv, '=') for kv in split(lstrip(head, '#')) if occursin('=', kv)))
+    return d["J_sd"], d["Omega"]
+end
+
+function main(args = ARGS)
+    path = DEFAULT_FILE; g = 1.0
+    i = 1
+    while i ≤ length(args)
+        if args[i] == "--g" && i < length(args)
+            g = parse(Float64, args[i+1]); i += 2
+        else
+            path = args[i]; i += 1
+        end
+    end
+    isfile(path) || error("no encuentro $path (corre antes kernel_elements.jl --kernel)")
+    data, pairs = read_chi0(path)
+    Jsd, Ω = read_meta(path)
+    scale(v, kind) = kind == "intercambio" ? g * Jsd * abs(v) / Ω : g * Jsd * abs(v)
+    println("="^78)
+    println("Elementos de la LLG efectiva (marco rotante) desde ", basename(path))
+    @printf("J_sd = %g   Ω = %g   g = %g\n", Jsd, Ω, g)
+    println("="^78)
+
+    EA = Dict{Tuple{Int,Int},NTuple{10,Float64}}()
+    ED = Dict{Tuple{Int,Int},NTuple{10,Float64}}()
+    for pr in pairs
+        x  = data[pr]
+        ea, ia = elements(Dict(k => v[1] for (k, v) in x))
+        ed, id = elements(Dict(k => v[2] for (k, v) in x))
+        EA[pr] = ea; ED[pr] = ed
+        i, j = pr
+        @printf("\npar (i,j) = (%d,%d)%s   [comprobacion: max|Im k=0|: χ̌ %.1e, i∂χ̌ %.1e]\n",
+                i, j, i == j ? " (on-site: J no da torque)" : "", ia, id)
+        show_block("intercambio", NAMES_A, ea)
+        show_block("damping", NAMES_D, ed)
+        show_matrix("Ā_ij", tensor(ea))
+        show_matrix("D̄_ij", tensor(ed))
+    end
+
+    # parte simetrica / antisimetrica en sitio de los pares fuera de la diagonal
+    for (i, j) in pairs
+        (i < j && haskey(EA, (j, i))) || continue
+        @printf("\nsitios (%d,%d) y (%d,%d): X^S = (X_ij + X_ji)/2,  X^A = (X_ij - X_ji)/2\n", i, j, j, i)
+        for (names, E) in ((NAMES_A, EA), (NAMES_D, ED))
+            for (k, nm) in enumerate(names)
+                s = (E[(i, j)][k] + E[(j, i)][k]) / 2
+                a = (E[(i, j)][k] - E[(j, i)][k]) / 2
+                @printf("      %-4s   S = %+.6e   A = %+.6e\n", nm, s, a)
+            end
+        end
+    end
+
+    # todos los elementos ordenados por magnitud
+    rows = Tuple{Float64,String,Tuple{Int,Int},String}[]
+    for pr in pairs, (names, E, kind) in ((NAMES_A, EA, "intercambio"), (NAMES_D, ED, "damping"))
+        for (k, nm) in enumerate(names)
+            (nm == "J" && pr[1] == pr[2]) && continue          # J_ii no da torque
+            push!(rows, (E[pr][k], nm, pr, kind))
+        end
+    end
+    sort!(rows; by = r -> -abs(r[1]))
+    vmax = abs(rows[1][1])
+    @printf("\n%d elementos (sin J_ii), ordenados por |valor|:\n", length(rows))
+    println("   escala: intercambio -> g J_sd |X|/Ω ;  damping -> g J_sd |X|")
+    @printf("   %4s  %-12s %-6s %-6s %14s %10s %12s\n", "#", "tipo", "elem", "(i,j)", "valor", "/max", "escala")
+    for (r, (v, nm, pr, kind)) in enumerate(rows)
+        @printf("   %4d  %-12s %-6s (%d,%d)  %+.6e  %9.1e  %10.2e%s\n", r, kind, nm, pr..., v, abs(v) / vmax,
+                scale(v, kind), kind == "intercambio" ? " Ω" : "")
+    end
+
+    out = joinpath(dirname(abspath(path)), replace(basename(path), "kernel_chi0_" => "llg_elements_"))
+    open(out, "w") do io
+        println(io, "i,j,tipo,elemento,valor,escala")
+        for (v, nm, pr, kind) in rows
+            @printf(io, "%d,%d,%s,%s,%.15e,%.6e\n", pr..., kind, nm, v, scale(v, kind))
+        end
+    end
+    println("\n  -> ", out)
+    return nothing
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

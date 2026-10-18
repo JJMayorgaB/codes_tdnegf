@@ -41,6 +41,10 @@ Uso desde la linea de comandos (lo llama plot_kernel_elements.py):
       dω = Ω/nomega, η (defecto 5dω); ventana ancha ±wide γ̃ con nwide puntos y
       estrecha ±narrow Ω con paso dω. Escribe kernel_chi_m{i}n{j}.csv y
       kernel_chi0_<pares>.csv (χ̌(0), i∂_ωχ̌(0)) en DIR (defecto output/<tag>/data).
+    julia -t auto kernel_elements.jl --tau --pairs "1,1"     # kernel en tiempo χ̌_k(τ)
+          [--t-dtau 0.1] [--t-taumax T] [--t-log2n 22] [--t-eta 5e-5] [--datadir DIR]
+      FFT de los armonicos analiticos (ω ∈ [-π/dτ, π/dτ), N = 2^log2n) y producto en τ.
+      Escribe kernel_tau_m{i}n{j}.csv (τ ∈ [-τmax, τmax], 6 componentes) en DIR.
 
 Orden de las 12 columnas complejas (COEFS):
     alpha_r beta_r gp_r gm_r  alpha_a beta_a gp_a gm_a  alpha_l beta_l gp_l gm_l
@@ -551,6 +555,192 @@ function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString)
     return nothing
 end
 
+# ---------------------------------------------------------------- kernel en tiempo
+#=
+Kernel en tiempo, τ = t - t':
+
+    χ(t, t-τ) = Σ_k e^{-ikΩt} χ̌_k(τ),     χ̌_k(ω) = ∫dτ e^{iωτ} χ̌_k(τ)
+
+La convolucion en ω' de las 𝒯(ω,ω') es un producto en τ:
+
+    χ̌_k(τ) = -i J_sd Σ_{a+b=k} 𝒯_{ab}(τ),
+    𝒯_{ab}(τ) = 𝒯_{ab}[escalares_ij(τ), escalares_ji(-τ)] · e^{ibΩτ}
+
+con los escalares en τ dados por  x(τ) = ∫dω/2π e^{-iωτ} x(ω).  Esa transformada
+se hace con FFT (propia, radix 2) sobre ω_q = ω₀ + qΔω, q = 0..N-1:
+    ω₀ = -π/dτ,  Δω = 2π/(N dτ)  =>  τ_n = n dτ exacto en la malla de la FFT,
+    periodo en τ: P = 2π/Δω = N dτ  (aliasing ~ e^{-ηP}, despreciable si ηP ≫ 1).
+La cola 1/ω de los α^{r,a}_{mm} on-site se resta en ω y se suma exacta en τ:
+    1/(ω+iη) -> -i θ(τ) e^{-ητ},   1/(ω-iη) -> +i θ(-τ) e^{ητ}.
+Los factores con e^{ibΩτ} reutilizan tsums: Xm = e^{-iΩτ} X (b = -1),
+Xp = e^{+iΩτ} X (b = +1).
+=#
+
+"FFT directa in situ, radix 2: a_n <- Σ_q a_q e^{-2πi qn/N} (N potencia de 2)."
+function fft!(a::AbstractVector{ComplexF64})
+    n = length(a)
+    ispow2(n) || throw(ArgumentError("fft!: N tiene que ser potencia de 2"))
+    j = 0                                                     # permutacion bit-reverse
+    for i in 0:n-1
+        if i < j
+            a[i+1], a[j+1] = a[j+1], a[i+1]
+        end
+        bit = n >> 1
+        while bit > 0 && (j & bit) != 0
+            j ⊻= bit
+            bit >>= 1
+        end
+        j |= bit
+    end
+    tw = [cis(-2π * k / n) for k in 0:(n÷2 - 1)]              # factores exactos (sin acumular)
+    len = 2
+    while len <= n
+        half = len >> 1
+        step = n ÷ len
+        for s in 1:len:n
+            for k in 0:half-1
+                w = tw[k*step+1]
+                u = a[s+k]; v = a[s+k+half] * w
+                a[s+k] = u + v
+                a[s+k+half] = u - v
+            end
+        end
+        len <<= 1
+    end
+    return a
+end
+
+"""
+Configuracion del kernel en τ:
+    dτ     paso en τ (y tamaño de la FFT: ω ∈ [-π/dτ, π/dτ))
+    τmax   τ ∈ [-τmax, τmax] (NaN -> T = 2π/Ω)
+    log2N  N = 2^log2N puntos de la FFT (Δω = 2π/(N dτ))
+    η      ensanchamiento (en τ: amortiguamiento e^{-η|τ|})
+"""
+Base.@kwdef struct TauConfig
+    dτ::Float64    = 0.1
+    τmax::Float64  = NaN
+    log2N::Int     = 22
+    η::Float64     = 5e-5
+end
+tmaxof(p::KParams, c::TauConfig) = isnan(c.τmax) ? 2π / p.Ω : c.τmax
+
+"""
+    coeff_tau(m, n, p, c) -> (A, Nτ)
+
+Los 12 escalares del par (m,n) en τ_n = n dτ, n = -Nτ..Nτ: A[coef, n+Nτ+1].
+"""
+function coeff_tau(m::Int, n::Int, p::KParams, c::TauConfig)
+    N  = 2^c.log2N; dτ = c.dτ; η = c.η
+    Δω = 2π / (N * dτ); ω0 = -π / dτ
+    Nτ = ceil(Int, tmaxof(p, c) / dτ)
+    2Nτ + 1 ≤ N || error("coeff_tau: la FFT es muy corta para τmax (sube log2N)")
+    Mmax = max(m, n); diag = m == n
+    X = Matrix{ComplexF64}(undef, N, 12)                      # columnas contiguas por escalar
+    coeff_omega!(X, 1, ω0, m, n, p, η, Mmax, diag)            # compila en el hilo principal
+    @threads for q in 1:N
+        coeff_omega!(X, q, ω0 + (q - 1) * Δω, m, n, p, η, Mmax, diag)
+    end
+    A   = Matrix{ComplexF64}(undef, 12, 2Nτ + 1)
+    col = Vector{ComplexF64}(undef, N)
+    for ic in 1:12
+        copyto!(col, view(X, :, ic))
+        fft!(col)
+        for nn in -Nτ:Nτ
+            τ = nn * dτ
+            A[ic, nn+Nτ+1] = col[mod(nn, N)+1] * cis(-ω0 * τ) * Δω / (2π)
+        end
+    end
+    if diag                                                   # colas exactas de α^{r,a}_{mm}
+        for nn in -Nτ:Nτ
+            τ = nn * dτ; r = nn + Nτ + 1
+            A[IAR, r] += τ > 0 ? -im * exp(-η * τ) : (τ == 0 ? -im / 2 : zero(ComplexF64))
+            A[IAA, r] += τ < 0 ?  im * exp( η * τ) : (τ == 0 ?  im / 2 : zero(ComplexF64))
+        end
+    end
+    return A, Nτ
+end
+
+"Fila q de X: los 12 escalares en ω (con la cola 1/(ω±iη) restada si diag)."
+@noinline function coeff_omega!(X, q::Int, ω::Float64, m::Int, n::Int, p::KParams,
+                                η::Real, Mmax::Int, diag::Bool)
+    cf = lead_coeffs(lead_tables(ω, p, η, Mmax), central(ω, p, η), m, n, p)
+    for (ic, v) in enumerate(cf)
+        X[q, ic] = v
+    end
+    if diag
+        X[q, IAR] -= 1 / complex(ω, η)
+        X[q, IAA] -= 1 / complex(ω, -η)
+    end
+    return nothing
+end
+
+"""
+    kernel_tau(i, j, p, c) -> (τs, χ)
+
+χ̌_{ij,k}(τ) de las 6 componentes (KCOMP) en τ ∈ [-τmax, τmax]: χ[n, comp].
+"""
+function kernel_tau(i::Int, j::Int, p::KParams, c::TauConfig)
+    Aij, Nτ = coeff_tau(i, j, p, c)
+    Aji = i == j ? Aij : coeff_tau(j, i, p, c)[1]
+    nt = 2Nτ + 1
+    τs = [(n - Nτ - 1) * c.dτ for n in 1:nt]
+    χ  = zeros(ComplexF64, nt, 6)
+    pre = -im * p.J_sd
+    for r in 1:nt
+        τ  = τs[r]
+        X  = Aij[:, r]
+        Y  = view(Aji, :, nt + 1 - r)                          # escalares ji en -τ
+        ph = cis(p.Ω * τ)
+        tv = tsums(X, conj(ph) .* X, ph .* X, Y)
+        for k in 1:6
+            χ[r, k] = pre * tv[k]
+        end
+    end
+    return τs, χ
+end
+
+"""
+Escribe χ̌_k(τ) de varios pares en <datadir>/kernel_tau_m{i}n{j}.csv e imprime
+las comprobaciones: causalidad (χ̌(τ<0) ≈ 0) y realidad de k = 0 (Im ≈ 0).
+"""
+function tau_run(pairs, p::KParams, c::TauConfig, datadir::AbstractString)
+    mkpath(datadir)
+    τmax = tmaxof(p, c); N = 2^c.log2N; Δω = 2π / (N * c.dτ)
+    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g dtau=%.15g taumax=%.15g log2N=%d\n",
+                    p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, c.η, c.dτ, τmax, c.log2N)
+    @printf("kernel(τ): dτ=%.3g  τmax=%.1f (T=%.1f)  N=2^%d  Δω=%.2e  ω∈[%.1f,%.1f)  η=%.1e  ηP=%.1f\n",
+            c.dτ, τmax, 2π / p.Ω, c.log2N, Δω, -π / c.dτ, π / c.dτ, c.η, c.η * N * c.dτ)
+    for (i, j) in pairs
+        t0 = time()
+        τs, χ = kernel_tau(i, j, p, c)
+        path = joinpath(datadir, "kernel_tau_m$(i)n$(j).csv")
+        open(path, "w") do io
+            print(io, meta)
+            print(io, "tau")
+            for k in KCOMP
+                print(io, ",Re_chi_", k, ",Im_chi_", k)
+            end
+            println(io)
+            for r in eachindex(τs)
+                @printf(io, "%.10g", τs[r])
+                for k in 1:6
+                    @printf(io, ",%.12e,%.12e", real(χ[r, k]), imag(χ[r, k]))
+                end
+                println(io)
+            end
+        end
+        # |τ| < 2: oscilaciones de Gibbs del corte en ω (|ω| < π/dτ); se reportan aparte
+        caus  = maximum(abs.(χ[τs .< -2.0, :])) / maximum(abs.(χ))
+        caus0 = maximum(abs.(χ[(τs .< -0.5 * c.dτ) .& (τs .>= -2.0), :])) / maximum(abs.(χ))
+        reim = [maximum(abs.(imag.(χ[:, k]))) / maximum(abs.(χ[:, k])) for k in 1:3]
+        @printf("  (%d,%d) en %.1f s -> %s\n", i, j, time() - t0, path)
+        @printf("      causalidad max|χ̌|/max|χ̌|: τ<-2 %.1e  (-2≤τ<0: %.1e, Gibbs)   realidad k=0 max|Im|/max|χ̌|: xx %.1e  yy %.1e  xz %.1e\n",
+                caus, caus0, reim...)
+    end
+    return nothing
+end
+
 """
 Escribe la malla en CSV: omega, m, n y Re/Im de cada uno de los 12 escalares.
 """
@@ -619,9 +809,14 @@ function _validate_body(FA::Module, p::KParams, η::Real, M::Int)
         dj = [v.d for v in cj]
         ed = max(ed, maximum(abs.(dj .- fd))); sd = max(sd, maximum(abs.(fd)))
     end
+    # FFT propia frente a la DFT directa
+    xs = [complex(sin(0.3k) + 0.1k, cos(1.7k)) for k in 0:255]
+    dft = [sum(xs[q+1] * cis(-2π * q * n / 256) for q in 0:255) for n in 0:255]
+    ef = maximum(abs.(fft!(copy(xs)) .- dft)) / maximum(abs.(dft))
     ok(x) = x < 1e-10 ? "OK" : "FALLA"
     println("="^72)
     @printf("  ∂_ω exacta (Jet) vs diferencias finitas: %.1e [%s]\n", ed / sd, ed / sd < 1e-6 ? "OK" : "FALLA")
+    @printf("  FFT propia vs DFT directa (N=256): %.1e [%s]\n", ef, ok(ef))
     @printf("kernel_elements.jl  vs  fully_analitical_inbedding_leads.jl   (m,n ≤ %d, η = %.1e)\n", M, η)
     @printf("  𝒢ʳ_{mn,k}: %.1e [%s]\n", er / sr, ok(er / sr))
     @printf("  𝒢<_{mn,k}: %.1e [%s]\n", el / sl, ok(el / sl))
@@ -684,12 +879,14 @@ function main(args = ARGS)
     opt = Dict("--params" => DEFAULT_PARAMS, "--pairs" => "1,1;1,2;2,1;2,2", "--wmin" => "-3.5",
                "--wmax" => "3.5", "--nw" => "28001", "--eta" => "", "--out" => "", "--datadir" => "",
                "--k-nomega" => "40", "--k-eta" => "", "--k-wide" => "6.0", "--k-nwide" => "1601",
-               "--k-narrow" => "2.5", "--k-margin" => "2.0")
+               "--k-narrow" => "2.5", "--k-margin" => "2.0",
+               "--t-dtau" => "0.1", "--t-taumax" => "", "--t-log2n" => "22", "--t-eta" => "5e-5")
     for k in OVERRIDES
         opt[k] = ""
     end
     validate_only = false
     do_kernel = false
+    do_tau = false
     i = 1
     while i ≤ length(args)
         a = args[i]
@@ -697,6 +894,8 @@ function main(args = ARGS)
             validate_only = true; i += 1
         elseif a == "--kernel"
             do_kernel = true; i += 1
+        elseif a == "--tau"
+            do_tau = true; i += 1
         elseif haskey(opt, a) && i < length(args)
             opt[a] = args[i+1]; i += 2
         else
@@ -714,6 +913,16 @@ function main(args = ARGS)
     # tag = carpeta del params.txt, o la etiqueta de los valores si hay overrides
     tag = overridden ? param_tag(p) : run_tag(opt["--params"])
     datadir = isempty(opt["--datadir"]) ? joinpath(@__DIR__, "output", tag, "data") : opt["--datadir"]
+    if do_tau
+        c = TauConfig(; dτ = parse(Float64, opt["--t-dtau"]),
+                        τmax = isempty(opt["--t-taumax"]) ? NaN : parse(Float64, opt["--t-taumax"]),
+                        log2N = parse(Int, opt["--t-log2n"]), η = parse(Float64, opt["--t-eta"]))
+        @printf("γ̃=%.4f θ_SO=%.4f J_sd=%.3f θ=%.1f° Ω=%.4g μ=%.2f β=%.1f | pares %s | hilos %d\n",
+                γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β,
+                join(["($m,$n)" for (m, n) in pairs], " "), nthreads())
+        Base.invokelatest(tau_run, pairs, p, c, datadir)
+        return nothing
+    end
     if do_kernel
         c = KernelConfig(; nΩ = parse(Int, opt["--k-nomega"]),
                            η = isempty(opt["--k-eta"]) ? NaN : parse(Float64, opt["--k-eta"]),

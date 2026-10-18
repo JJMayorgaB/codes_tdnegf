@@ -35,7 +35,9 @@ Figuras ordenadas por par y componente:
     figures/m{m}n{n}/harmonics/kernel_elements_G{r,a,l}_m{m}n{n}.*
     figures/m{m}n{n}/kernel/{xx0,yy0,xz0,xy1,yx1,xx2}/kernel_{chi,idchi}_<comp>_m{m}n{n}_{gamma,gamma_full,Omega}.*
 
-    figures/all_pairs/kernel_{chi,idchi}_<comp>_all_{gamma,gamma_full,Omega}.*
+    figures/all_pairs/kernel/<comp>/kernel_{chi,idchi}_<comp>_all_{gamma,gamma_full,Omega}.*
+    figures/all_pairs/kernel_tau/<comp>/kernel_tau_<comp>_all.*
+    figures/all_pairs/kernel_tmap/{xx,yy,xz,xy,yx}/kernel_tmap_<spin>_all_{tt200,ttT,ttau}.*
         (con varios pares: malla en sitios, i por columnas y j por filas, eje y propio por panel)
 
 Salida (tag = nombre de la carpeta del params.txt):
@@ -307,8 +309,7 @@ def plot_kernel_grid(datadir, figdir, pairs, vals, gxlim=3.5):
     nS = len(sites)
     data = {(m, n): pd.read_csv(os.path.join(datadir, f'kernel_chi_m{m}n{n}.csv'), comment='#')
             for m, n in pairs}
-    outdir = os.path.join(figdir, 'all_pairs')
-    os.makedirs(outdir, exist_ok=True)
+    outroot = os.path.join(figdir, 'all_pairs', 'kernel')
     gt = np.hypot(vals['gamma'], vals['gso'])
     views = (('gamma', 'gamma', gt, r'$\omega/\tilde{\gamma}$', gxlim),
              ('gamma_full', 'gamma', gt, r'$\omega/\tilde{\gamma}$', None),
@@ -351,16 +352,234 @@ def plot_kernel_grid(datadir, figdir, pairs, vals, gxlim=3.5):
                 P._legend_en_hueco(ax0, handles, [r'$\mathrm{Re}$', r'$\mathrm{Im}$'], ncol=1,
                                    title=lab, fontsize=16, title_fontsize=18, handlelength=1.5)
                 for ext in ('jpg', 'svg', 'pdf'):
+                    outdir = os.path.join(outroot, comp)
+                    os.makedirs(outdir, exist_ok=True)
                     path = os.path.join(outdir, f'kernel_{q}_{comp}_all_{suf}.{ext}')
                     fig.savefig(path, bbox_inches='tight', dpi=300)
                     print(f'  -> {path}')
                 plt.close(fig)
 
 
+# ---------------------------------------------------------------- kernel en tiempo
+# armonicos que forman cada componente de espin en (t,t'):  (k, coeficiente, columna k>0 o k=0)
+#   χ(t,t-τ) = Re χ̌_0(τ) + Σ_{k>0} 2 Re[c e^{-ikΩt} χ̌_k(τ)]
+SPIN = {'xx': ((0, 1, 'xx0'), (2, 1, 'xx2')),
+        'yy': ((0, 1, 'yy0'),),
+        'xz': ((0, 1, 'xz0'), (2, -1j, 'xx2')),        # χ^{xz}_{±2} = ∓i χ^{xx}_{±2}
+        'xy': ((1, 1, 'xy1'),),
+        'yx': ((1, 1, 'yx1'),)}
+TCMAP = plt.get_cmap('seismic')
+
+
+def tau_cfg(args, vals):
+    """Configuracion del kernel en τ tal como la usara kernel_elements.jl (τmax por defecto T)."""
+    T = 2 * np.pi / vals['Omega']
+    return dict(eta=args.t_eta, dtau=args.t_dtau, taumax=args.t_taumax if args.t_taumax else T,
+                log2N=args.t_log2n)
+
+
+def tau_matches(datadir, pairs, vals, cfg):
+    for m, n in pairs:
+        path = os.path.join(datadir, f'kernel_tau_m{m}n{n}.csv')
+        if not os.path.isfile(path):
+            return False
+        with open(path) as fh:
+            meta = dict(kv.split('=') for kv in fh.readline().lstrip('#').split())
+        for k, ck in CSV_KEYS.items():
+            want = np.deg2rad(vals[k]) if k == 'theta' else vals[k]
+            if not np.isclose(float(meta[ck]), want, rtol=1e-9, atol=1e-14):
+                return False
+        for k, v in cfg.items():
+            if k not in meta or not np.isclose(float(meta[k]), v, rtol=1e-6, atol=0):
+                return False
+    return True
+
+
+def run_julia_tau(args, datadir, pairs):
+    cmd = [args.julia, '-t', str(args.threads), JL, '--tau', '--params', args.params,
+           '--pairs', pairs_str(pairs), '--datadir', datadir, '--t-dtau', repr(args.t_dtau),
+           '--t-log2n', str(args.t_log2n), '--t-eta', repr(args.t_eta)]
+    if args.t_taumax:
+        cmd += ['--t-taumax', repr(args.t_taumax)]
+    for k in DEFAULTS:
+        v = getattr(args, k)
+        if v is not None:
+            cmd += [f'--{k}', repr(v)]
+    print('$ ' + ' '.join(cmd))
+    subprocess.run(cmd, check=True)
+
+
+def load_tau(datadir, m, n):
+    """τ (malla simetrica) y χ̌_k(τ) complejo por componente de KCOMP."""
+    d = pd.read_csv(os.path.join(datadir, f'kernel_tau_m{m}n{n}.csv'), comment='#')
+    tau = d['tau'].to_numpy()
+    return tau, {c: d[f'Re_chi_{c}'].to_numpy() + 1j * d[f'Im_chi_{c}'].to_numpy() for c in KCOMP}
+
+
+def _save_fig(fig, outdir, name):
+    os.makedirs(outdir, exist_ok=True)
+    for ext in ('jpg', 'svg', 'pdf'):
+        path = os.path.join(outdir, f'{name}.{ext}')
+        fig.savefig(path, bbox_inches='tight', dpi=300)
+        print(f'  -> {path}')
+    plt.close(fig)
+
+
+def _tau_curve(ax, tau, z, tplot):
+    sel = (tau >= 0) & (tau <= tplot * (1 + 1e-12))
+    ax.axhline(0.0, color='0.6', lw=0.8, zorder=1)
+    for part, f in (('Re', np.real), ('Im', np.imag)):
+        ax.plot(tau[sel], f(z[sel]), '-', color=KCOLORS[part], lw=1.2, zorder=3)
+    ax.set_xlim(0.0, tplot)
+    _fmt_axes(ax)
+
+
+def plot_tau(datadir, figdir, pairs, tplot=200.0):
+    """χ̌_k(τ), τ ∈ [0, tplot]: una figura por par y componente, y la malla 2x2 por componente."""
+    data = {pr: load_tau(datadir, *pr) for pr in pairs}
+    handles = [Line2D([], [], color=KCOLORS[pt], lw=2.0) for pt in ('Re', 'Im')]
+    labs = [r'$\mathrm{Re}$', r'$\mathrm{Im}$']
+    for comp, (ab, k) in KCOMP.items():
+        for (m, n), (tau, chi) in data.items():
+            fig, ax = plt.subplots(figsize=(6.4, 4.6))
+            _tau_curve(ax, tau, chi[comp], tplot)
+            ax.set_xlabel(r'$\tau$')
+            ax.set_ylabel(rf'$\check{{\chi}}^{{{ab}}}_{{{m}{n},{k}}}(\tau)$')
+            ax.legend(handles, labs, loc='best', frameon=False, fontsize=14, handlelength=1.6)
+            _save_fig(fig, os.path.join(figdir, f'm{m}n{n}', 'kernel_tau', comp), f'kernel_tau_{comp}_m{m}n{n}')
+        if len(pairs) > 1:
+            sites = sorted({a for a, _ in pairs} | {b for _, b in pairs}); nS = len(sites)
+            fig, axes = plt.subplots(nS, nS, figsize=(5.0 * nS, 4.0 * nS), squeeze=False)
+            for r, j in enumerate(sites):
+                for c, i in enumerate(sites):
+                    ax = axes[r, c]
+                    if (i, j) not in data:
+                        ax.set_axis_off(); continue
+                    tau, chi = data[(i, j)]
+                    _tau_curve(ax, tau, chi[comp], tplot)
+                    if r == 0:
+                        ax.set_title(rf'$i={i}$', fontsize=22, pad=10)
+                    if c == 0:
+                        ax.text(-0.32, 0.5, rf'$j={j}$', transform=ax.transAxes, rotation=90,
+                                ha='center', va='center', fontsize=22)
+                    if r == nS - 1:
+                        ax.set_xlabel(r'$\tau$')
+            fig.tight_layout()
+            ax0 = next(a for a in axes.ravel() if a.axison)
+            P._legend_en_hueco(ax0, handles, labs, ncol=1,
+                               title=rf'$\check{{\chi}}^{{{ab}}}_{{ij,{k}}}(\tau)$',
+                               fontsize=16, title_fontsize=18, handlelength=1.5)
+            _save_fig(fig, os.path.join(figdir, 'all_pairs', 'kernel_tau', comp), f'kernel_tau_{comp}_all')
+
+
+def _block(Z, fr, fc):
+    """Promedio por bloques fr x fc (sin submuestrear: evita aliasing al dibujar)."""
+    nr, nc = (Z.shape[0] // fr) * fr, (Z.shape[1] // fc) * fc
+    return Z[:nr, :nc].reshape(nr // fr, fr, nc // fc, fc).mean(axis=(1, 3))
+
+
+def spin_map(tau, chi, spin, Omega, view, tplot, npix):
+    """
+    Mapa real de χ^{spin}_{ij}. view:
+      'tt200': (t,t') ∈ [0,tplot]^2      'ttT': (t,t') ∈ [0,T]^2      'ttau': (t,τ) ∈ [0,T]x[0,tplot]
+    Devuelve (Z[x,y] promediado por bloques, extent, max|Im| relativo antes de tomar Re).
+    """
+    dt = tau[1] - tau[0]; N0 = int(np.argmin(np.abs(tau)))          # indice de τ = 0
+    T = 2 * np.pi / Omega
+    terms = [(k, cf, chi[col]) for k, cf, col in SPIN[spin]]
+    imrel = max(np.abs(z.imag).max() / max(np.abs(z).max(), 1e-300) for k, _, z in terms if k == 0) \
+        if any(k == 0 for k, _, _ in terms) else 0.0
+
+    def field(ta, tidx):                       # ta (filas), tidx indices de τ (filas x columnas)
+        Zr = np.zeros(tidx.shape)
+        for k, cf, z in terms:
+            if k == 0:
+                Zr += np.real(z[tidx])
+            else:
+                Zr += 2 * np.real(cf * np.exp(-1j * k * Omega * ta)[:, None] * z[tidx])
+        return Zr
+
+    if view in ('tt200', 'ttT'):
+        W = tplot if view == 'tt200' else T
+        n = int(round(W / dt))
+        if N0 - (n - 1) < 0 or N0 + (n - 1) >= len(tau):
+            raise SystemExit(f'kernel_tau: τmax < {W:.1f}; corre de nuevo con --t-taumax mayor')
+        f = max(1, int(np.ceil(n / npix)))
+        nb = n // f
+        b = np.arange(nb * f)
+        rows = []
+        for a0 in range(0, nb * f, f):
+            a = np.arange(a0, a0 + f)
+            Zr = field(a * dt, N0 + a[:, None] - b[None, :])
+            rows.append(_block(Zr, f, f)[0])
+        Z = np.array(rows)
+        ext = (0, nb * f * dt, 0, nb * f * dt)
+        if view == 'ttT':
+            ext = tuple(e / T for e in ext)
+        return Z, ext, imrel
+    # 'ttau'
+    nt = int(round(T / dt)); ntau = int(round(tplot / dt)) + 1
+    ft = max(1, int(np.ceil(nt / npix))); fu = max(1, int(np.ceil(ntau / npix)))
+    ta = np.arange(nt) * dt
+    Z = _block(field(ta, np.broadcast_to(N0 + np.arange(ntau)[None, :], (nt, ntau))), ft, fu)
+    return Z, (0, (nt // ft) * ft * dt / T, 0, (ntau // fu) * fu * dt), imrel
+
+
+VIEWS = {'tt200': (r'$t$', r"$t'$"), 'ttT': (r'$t/T$', r"$t'/T$"), 'ttau': (r'$t/T$', r'$\tau$')}
+
+
+def _draw_map(ax, fig, Z, ext, cbar_lab):
+    v = np.abs(Z).max() or 1.0
+    im = ax.imshow(Z.T, origin='lower', extent=ext, aspect='auto', interpolation='nearest',
+                   cmap=TCMAP, vmin=-v, vmax=v)
+    cb = fig.colorbar(im, ax=ax, pad=0.02)
+    cb.set_label(cbar_lab, fontsize=16)
+    P._sci_cbar(cb)
+    _fmt_axes(ax)
+
+
+def plot_tmaps(datadir, figdir, pairs, vals, tplot=200.0, npix=800):
+    """Mapas de las 5 componentes de espin en las 3 vistas: por par y mallas 2x2."""
+    data = {pr: load_tau(datadir, *pr) for pr in pairs}
+    sites = sorted({a for a, _ in pairs} | {b for _, b in pairs}); nS = len(sites)
+    for spin in SPIN:
+        for view, (xl, yl) in VIEWS.items():
+            maps = {}
+            for (m, n), (tau, chi) in data.items():
+                Z, ext, imrel = spin_map(tau, chi, spin, vals['Omega'], view, tplot, npix)
+                maps[(m, n)] = (Z, ext)
+                if imrel > 1e-6:
+                    print(f'  aviso: {spin} ({m},{n}) max|Im χ̌_0|/max|χ̌_0| = {imrel:.1e}')
+                fig, ax = plt.subplots(figsize=(6.4, 4.6))
+                _draw_map(ax, fig, Z, ext, rf"$\chi^{{{spin}}}_{{{m}{n}}}(t,t')$")
+                ax.set_xlabel(xl); ax.set_ylabel(yl)
+                _save_fig(fig, os.path.join(figdir, f'm{m}n{n}', 'kernel_tmap', spin),
+                          f'kernel_tmap_{spin}_m{m}n{n}_{view}')
+            if len(pairs) > 1:
+                fig, axes = plt.subplots(nS, nS, figsize=(5.0 * nS, 4.0 * nS), squeeze=False)
+                for r, j in enumerate(sites):
+                    for c, i in enumerate(sites):
+                        ax = axes[r, c]
+                        if (i, j) not in maps:
+                            ax.set_axis_off(); continue
+                        Z, ext = maps[(i, j)]
+                        _draw_map(ax, fig, Z, ext, rf"$\chi^{{{spin}}}_{{{i}{j}}}$")
+                        if r == 0:
+                            ax.set_title(rf'$i={i}$', fontsize=22, pad=10)
+                        if c == 0:
+                            ax.text(-0.30, 0.5, rf'$j={j}$', transform=ax.transAxes, rotation=90,
+                                    ha='center', va='center', fontsize=22)
+                            ax.set_ylabel(yl)
+                        if r == nS - 1:
+                            ax.set_xlabel(xl)
+                fig.tight_layout()
+                _save_fig(fig, os.path.join(figdir, 'all_pairs', 'kernel_tmap', spin), f'kernel_tmap_{spin}_all_{view}')
+
+
 def main():
     ap = argparse.ArgumentParser(description='Armonicos k=0,±1 de G^{r,a,<}_{mn} del lead (precesion en y).')
     ap.add_argument('--pairs', default='1,1;1,2;2,1;2,2', help='pares m,n separados por ";" (m, n >= 1)')
-    ap.add_argument('--what', choices=['all', 'harmonics', 'kernel'], default='all',
+    ap.add_argument('--what', choices=['all', 'harmonics', 'kernel', 'tau'], default='all',
                     help='que graficar: armonicos de G, kernel, o ambos')
     # kernel (ver kernel_elements.jl): dω = Ω/k-nomega, η (defecto 5dω), ventanas ±k-wide γ̃ y ±k-narrow Ω
     ap.add_argument('--k-nomega', type=int, default=40)
@@ -371,6 +590,13 @@ def main():
                     help='limite |ω|/γ̃ de las figuras _gamma (las _gamma_full muestran todo ±k-wide)')
     ap.add_argument('--k-narrow', type=float, default=2.5)
     ap.add_argument('--k-margin', type=float, default=2.0)
+    # kernel en tiempo (ver kernel_elements.jl --tau)
+    ap.add_argument('--t-dtau', type=float, default=0.1)
+    ap.add_argument('--t-taumax', type=float, default=None, help='defecto: T = 2π/Ω')
+    ap.add_argument('--t-log2n', type=int, default=22)
+    ap.add_argument('--t-eta', type=float, default=5e-5)
+    ap.add_argument('--t-plot', type=float, default=200.0, help='τ maximo de las curvas y ventana (t,t\') corta')
+    ap.add_argument('--t-npix', type=int, default=800, help='pixeles por eje de los mapas (promedio por bloques)')
     ap.add_argument('--params', default=DEFAULT_PARAMS,
                     help='params.txt de la corrida de TDNEGF ("none": valores por defecto de KParams)')
     # cualquier parametro se puede cambiar sobre los del params.txt (θ en grados)
@@ -427,6 +653,15 @@ def main():
             plot_kernel(datadir, figdir, m, n, vals, args.k_xlim)
         if len(pairs) > 1:
             plot_kernel_grid(datadir, figdir, pairs, vals, args.k_xlim)
+
+    if args.what in ('all', 'tau'):
+        cfg = tau_cfg(args, vals)
+        if args.recompute or not tau_matches(datadir, pairs, vals, cfg):
+            run_julia_tau(args, datadir, pairs)
+        else:
+            print(f'usando kernel(τ) existente en {datadir}')
+        plot_tau(datadir, figdir, pairs, args.t_plot)
+        plot_tmaps(datadir, figdir, pairs, vals, args.t_plot, args.t_npix)
 
 
 if __name__ == '__main__':
