@@ -11,6 +11,7 @@
 #   animations/y_precession/DFF/<param_tag>.mp4       columnas F1-2 | F3-6 | F5-9
 #   animations/y_precession/FDF/<param_tag>.mp4       columnas Fm1-1 | Fm3-3 | Fm4-4
 #   animations/y_precession/DFF_FDF/<param_tag>.mp4   las 6 (DFF arriba, FDF abajo)
+# cada uno en dos estilos: <param_tag>.mp4 (cadena) y bloch_<param_tag>.mp4 (esfera de Bloch)
 #
 # Uso (en tmux, desde two_oscillators_setup; antes, una vez: bash migrate_layout.sh):
 #   bash run_all.sh                      # 16 corridas a la vez, 8 hilos de BLAS cada una
