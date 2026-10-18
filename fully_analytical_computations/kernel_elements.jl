@@ -35,6 +35,12 @@ Uso desde la linea de comandos (lo llama plot_kernel_elements.py):
     Con --params none se parte de KParams() en vez de un params.txt.
     julia kernel_elements.jl --validate [--params ...]   # compara con la implementacion
                                                          # matricial ya validada contra Sambe
+    julia -t auto kernel_elements.jl --kernel --pairs "1,1"   # kernel χ̌(ω) e i∂_ωχ̌(ω)
+          [--k-nomega 40] [--k-eta η] [--k-wide 6.0] [--k-nwide 1601] [--k-narrow 2.5]
+          [--k-margin 2.0] [--datadir DIR]
+      dω = Ω/nomega, η (defecto 5dω); ventana ancha ±wide γ̃ con nwide puntos y
+      estrecha ±narrow Ω con paso dω. Escribe kernel_chi_m{i}n{j}.csv y
+      kernel_chi0_<pares>.csv (χ̌(0), i∂_ωχ̌(0)) en DIR (defecto output/<tag>/data).
 
 Orden de las 12 columnas complejas (COEFS):
     alpha_r beta_r gp_r gm_r  alpha_a beta_a gp_a gm_a  alpha_l beta_l gp_l gm_l
@@ -88,6 +94,58 @@ function read_params(path::AbstractString)
                      Ω = d["Ω"], μ = d["E_F"], β = d["β"])
 end
 
+# ---------------------------------------------------------------- derivada exacta en ω
+"""
+Jet: numero (valor, derivada) respecto de ω, f(ω) -> (f, ∂_ω f). Las formulas de
+los armonicos se evaluan con ω = Jet(ω, 1) y dan su derivada exacta (diferenciacion
+automatica en modo directo, sin dependencias). Solo hacen falta +, -, *, /, conj,
+real, imag, abs2 y las dos funciones no polinomiales (Sʳ y la Fermi), que tienen
+metodos propios. Valores reales se guardan como complejos con parte imaginaria 0.
+"""
+struct Jet <: Number
+    v::ComplexF64
+    d::ComplexF64
+end
+Base.convert(::Type{Jet}, x::Jet) = x
+Base.convert(::Type{Jet}, x::Number) = Jet(ComplexF64(x), zero(ComplexF64))
+Base.promote_rule(::Type{Jet}, ::Type{<:Number}) = Jet
+# Operaciones mixtas explicitas (Jet con reales/complejos): evitan pasar por la
+# maquinaria de promote en cada operacion, lo que acorta mucho la inferencia de tipos.
+const RC = Union{Real,Complex}
+Base.:+(a::Jet, b::RC) = Jet(a.v + b, a.d)
+Base.:+(a::RC, b::Jet) = Jet(a + b.v, b.d)
+Base.:-(a::Jet, b::RC) = Jet(a.v - b, a.d)
+Base.:-(a::RC, b::Jet) = Jet(a - b.v, -b.d)
+Base.:*(a::Jet, b::RC) = Jet(a.v * b, a.d * b)
+Base.:*(a::RC, b::Jet) = Jet(a * b.v, a * b.d)
+Base.:/(a::Jet, b::RC) = Jet(a.v / b, a.d / b)
+Base.:/(a::RC, b::Jet) = Jet(a / b.v, -a * b.d / (b.v * b.v))
+Base.:+(a::Jet, b::Jet) = Jet(a.v + b.v, a.d + b.d)
+Base.:-(a::Jet, b::Jet) = Jet(a.v - b.v, a.d - b.d)
+Base.:-(a::Jet) = Jet(-a.v, -a.d)
+Base.:*(a::Jet, b::Jet) = Jet(a.v * b.v, a.v * b.d + a.d * b.v)
+Base.:/(a::Jet, b::Jet) = Jet(a.v / b.v, (a.d * b.v - a.v * b.d) / (b.v * b.v))
+Base.conj(a::Jet) = Jet(conj(a.v), conj(a.d))
+Base.real(a::Jet) = Jet(real(a.v), real(a.d))
+Base.imag(a::Jet) = Jet(imag(a.v), imag(a.d))
+Base.abs2(a::Jet) = Jet(abs2(a.v), 2 * real(conj(a.v) * a.d))
+Base.zero(::Type{Jet}) = Jet(0, 0)
+Base.one(::Type{Jet}) = Jet(1, 0)
+Base.zero(::Jet) = Jet(0, 0)
+Base.one(::Jet) = Jet(1, 0)
+value(x::Jet) = x.v
+deriv(x::Jet) = x.d
+
+"ω + iη (con su derivada si ω es un Jet)."
+zη(ω::Real, η::Real) = complex(ω, η)
+zη(ω::Jet, η::Real)  = Jet(ω.v + im * η, ω.d)
+
+"Fermi con derivada exacta: ∂_ω f = -β f (1 - f)."
+function fermi(ω::Jet, p::KParams)
+    f = fermi(real(ω.v), p)
+    return Jet(f, -p.β * f * (1 - f) * ω.d)
+end
+
 # ---------------------------------------------------------------- S, g₁₁
 "Sʳ(ω) = sqrt((ω+iη)² - 4γ̃²) en la rama con Im Sʳ ≥ 0."
 @inline function Sr(ω::Real, p::KParams, η::Real)
@@ -95,8 +153,15 @@ end
     return sqrt(z - b) * sqrt(z + b)
 end
 
+"Sʳ con derivada: de S² = z² - 4γ̃², ∂_ω S = z/S."
+@inline function Sr(ω::Jet, p::KParams, η::Real)
+    w = real(ω.v)
+    s = Sr(w, p, η)
+    return Jet(s, complex(w, η) / s * ω.d)
+end
+
 "g₁₁ʳ(ω) = [(ω+iη) - Sʳ(ω)]/(2γ̃²)."
-@inline g11r(ω::Real, p::KParams, η::Real) = (complex(ω, η) - Sr(ω, p, η)) / (2γt(p)^2)
+@inline g11r(ω, p::KParams, η::Real) = (zη(ω, η) - Sr(ω, p, η)) / (2γt(p)^2)
 
 # ---------------------------------------------------------------- centro
 """
@@ -104,13 +169,13 @@ Coeficientes de los armonicos del sitio central en ω (solo dependen de ω):
     𝒢^μ_{C,0} = A0 σ0 + B0 σy,   𝒢^μ_{C,+1} = Ap τ+,   𝒢^μ_{C,-1} = Am τ-
 para μ = r, a (= conjugado de r) y < (formulas de X<↑, X<↓, A<_{C,±1}).
 """
-struct Central
-    A0r::ComplexF64; B0r::ComplexF64; Apr::ComplexF64; Amr::ComplexF64
-    A0a::ComplexF64; B0a::ComplexF64; Apa::ComplexF64; Ama::ComplexF64
-    A0l::ComplexF64; B0l::ComplexF64; Apl::ComplexF64; Aml::ComplexF64
+struct Central{T}
+    A0r::T; B0r::T; Apr::T; Amr::T
+    A0a::T; B0a::T; Apa::T; Ama::T
+    A0l::T; B0l::T; Apl::T; Aml::T
 end
 
-function central(ω::Real, p::KParams, η::Real)
+function central(ω, p::KParams, η::Real)
     Ω  = p.Ω
     Jc = p.J_sd * cos(p.θ); Js = p.J_sd * sin(p.θ); J2 = p.J_sd^2
     Sm, S0, Sp = Sr(ω - Ω, p, η), Sr(ω, p, η), Sr(ω + Ω, p, η)
@@ -131,9 +196,10 @@ function central(ω::Real, p::KParams, η::Real)
     Apl = -2im * Js / abs2(Δ0)  * (f0 * Im_0 * (conj(Sp) + Jc) + fp * Im_p * (S0 - Jc))
     Aml = -2im * Js / abs2(Δ0m) * (f0 * Im_0 * (conj(Sm) - Jc) + fm * Im_m * (S0 + Jc))
 
-    return Central(A0r, B0r, Apr, Amr,
-                   conj(A0r), conj(B0r), conj(Apr), conj(Amr),
-                   (Xup + Xdn) / 2, (Xup - Xdn) / 2, Apl, Aml)
+    T = typeof(A0r)
+    return Central{T}(A0r, B0r, Apr, Amr,
+                      conj(A0r), conj(B0r), conj(Apr), conj(Amr),
+                      (Xup + Xdn) / 2, (Xup - Xdn) / 2, Apl, Aml)
 end
 
 # ---------------------------------------------------------------- tablas por ω
@@ -143,18 +209,18 @@ Todo lo del lead que depende solo de ω, tabulado hasta el sitio Mmax:
     geo[L]  = Σ_{p=0}^{L-1} [γ̃ g₁₁ʳ(ω)]^{2p}                                      (L = 1..Mmax)
     mγ[s+1] = (-γ̃)^s                                                              (s = 0..2Mmax)
 """
-struct LeadTables
-    g0::Vector{ComplexF64}; gp::Vector{ComplexF64}; gm::Vector{ComplexF64}
-    geo::Vector{ComplexF64}; mγ::Vector{Float64}
-    f0::Float64; fp::Float64; fm::Float64
+struct LeadTables{T,R}
+    g0::Vector{T}; gp::Vector{T}; gm::Vector{T}
+    geo::Vector{T}; mγ::Vector{Float64}
+    f0::R; fp::R; fm::R
 end
 
-function lead_tables(ω::Real, p::KParams, η::Real, Mmax::Int)
-    pw(g) = (v = Vector{ComplexF64}(undef, Mmax + 1); v[1] = 1; for s in 1:Mmax; v[s+1] = v[s] * g; end; v)
+function lead_tables(ω, p::KParams, η::Real, Mmax::Int)
+    pw(g) = (v = Vector{typeof(g)}(undef, Mmax + 1); v[1] = one(g); for s in 1:Mmax; v[s+1] = v[s] * g; end; v)
     g0 = g11r(ω, p, η)
     q  = (γt(p) * g0)^2
-    geo = Vector{ComplexF64}(undef, Mmax)
-    acc = zero(ComplexF64); t = one(ComplexF64)
+    geo = Vector{typeof(g0)}(undef, Mmax)
+    acc = zero(g0); t = one(g0)
     for L in 1:Mmax
         acc += t; geo[L] = acc; t *= q
     end
@@ -276,6 +342,215 @@ function harmonics_grid(ωs::AbstractVector{<:Real}, pairs::AbstractVector{Tuple
     return H
 end
 
+# ---------------------------------------------------------------- kernel
+#=
+Componentes independientes del kernel (seccion "Kernel Floquet harmonics"):
+
+    χ̌_{ij,k}(ω) = -i J_sd ∫dω'/2π  Σ 𝒯_{ab}(ω,ω'),   𝒯 = f(armonicos_ij(ω+ω'+bΩ), armonicos_ji(ω'))
+
+con las 10 cantidades auxiliares 𝒯. Malla: ω' = q dω con dω = Ω/nΩ (nΩ entero),
+asi que ω+ω'+bΩ cae en la malla si ω = s dω: todo son desplazamientos de indice,
+sin interpolar. Los armonicos ij se tabulan con su derivada exacta (Jet); los ji
+solo en valor. i ∂_ω χ̌ sale de la misma suma con la derivada del factor ij.
+=#
+
+const KCOMP = ("xx0", "yy0", "xz0", "xy1", "yx1", "xx2")      # χ^{xx}_0 ... χ^{xx}_2
+const IAR, IBR, IGPR, IGMR = 1, 2, 3, 4                        # indices en COEFS
+const IAA, IBA, IGPA, IGMA = 5, 6, 7, 8
+const IAL, IBL, IGPL, IGML = 9, 10, 11, 12
+
+"""
+Tabla (12, Nq) de los escalares del par (m,n) en ω = q dω, q ∈ qs. Con
+withder = true devuelve tambien la tabla de ∂_ω (diferenciacion exacta con Jet).
+"""
+function coeff_table(qs::AbstractVector{Int}, dω::Real, m::Int, n::Int, p::KParams;
+                     η::Real, withder::Bool)
+    N = length(qs); Mmax = max(m, n)
+    V = Matrix{ComplexF64}(undef, 12, N)
+    D = withder ? Matrix{ComplexF64}(undef, 12, N) : Matrix{ComplexF64}(undef, 0, 0)
+    # primera llamada en el hilo principal: compila aqui (pila grande) y no dentro de
+    # las tareas de @threads
+    coeff_point!(V, D, 1, qs[1] * dω, m, n, p, η, Mmax, withder)
+    @threads for iq in 1:N
+        coeff_point!(V, D, iq, qs[iq] * dω, m, n, p, η, Mmax, withder)
+    end
+    return V, D
+end
+
+"Columna iq de las tablas: los 12 escalares en ω (y su derivada si withder)."
+@noinline function coeff_point!(V, D, iq::Int, ω::Float64, m::Int, n::Int, p::KParams,
+                                η::Real, Mmax::Int, withder::Bool)
+    if withder
+        x = Jet(ω, 1.0)
+        c = lead_coeffs(lead_tables(x, p, η, Mmax), central(x, p, η), m, n, p)
+        for (ic, v) in enumerate(c)
+            V[ic, iq] = v.v; D[ic, iq] = v.d
+        end
+    else
+        c = lead_coeffs(lead_tables(ω, p, η, Mmax), central(ω, p, η), m, n, p)
+        for (ic, v) in enumerate(c)
+            V[ic, iq] = v
+        end
+    end
+    return nothing
+end
+
+"""
+Las 6 sumas Σ_{ab} 𝒯_{ab} (orden KCOMP) en un punto, con X0, Xm, Xp = columna de
+los escalares ij en ω+ω', ω+ω'-Ω, ω+ω'+Ω (o sus derivadas) e Y = columna ji en ω'.
+Cada 𝒯 es lineal en el factor ij, asi que la misma funcion sirve para ∂_ω.
+"""
+@inline function tsums(X0, Xm, Xp, Y)
+    αaY, βaY, αlY, βlY = Y[IAA], Y[IBA], Y[IAL], Y[IBL]
+    αl, βl, αr, βr = X0[IAL], X0[IBL], X0[IAR], X0[IBR]
+    t_xx0 = 2 * (αl * αaY - βl * βaY + αr * αlY - βr * βlY)
+    t_yy0 = 2 * (αl * αaY + βl * βaY + αr * αlY + βr * βlY) -
+            (Xm[IGPL] * Y[IGMA] + Xm[IGPR] * Y[IGML]) -                   # 𝒯^{yy}_{1,-1}
+            (Xp[IGML] * Y[IGPA] + Xp[IGMR] * Y[IGPL])                     # 𝒯^{yy}_{-1,1}
+    t_xz0 = 2im * (βl * αaY - αl * βaY + βr * αlY - αr * βlY)
+    t_xy1 = -im * (X0[IGPL] * (αaY - βaY) + X0[IGPR] * (αlY - βlY)) +     # 𝒯^{xy}_{1,0}
+             im * ((Xp[IAL] + Xp[IBL]) * Y[IGPA] + (Xp[IAR] + Xp[IBR]) * Y[IGPL])   # 𝒯^{xy}_{0,1}
+    t_yx1 =  im * (X0[IGPL] * (αaY + βaY) + X0[IGPR] * (αlY + βlY)) -     # 𝒯^{yx}_{1,0}
+             im * ((Xp[IAL] - Xp[IBL]) * Y[IGPA] + (Xp[IAR] - Xp[IBR]) * Y[IGPL])   # 𝒯^{yx}_{0,1}
+    t_xx2 = -(Xp[IGPL] * Y[IGPA] + Xp[IGPR] * Y[IGPL])                    # 𝒯^{xx}_{1,1}
+    return (t_xx0, t_yy0, t_xz0, t_xy1, t_yx1, t_xx2)
+end
+
+"""
+Configuracion numerica del kernel:
+    nΩ      dω = Ω/nΩ (malla comun de ω' y de los desplazamientos)
+    η       ensanchamiento (por defecto 5 dω)
+    wide    semiancho de la ventana ancha en unidades de γ̃;  nwide puntos
+    narrow  semiancho de la ventana estrecha en unidades de Ω (paso dω)
+    margin  margen bajo el estado ligado inferior para la integral en ω'
+"""
+Base.@kwdef struct KernelConfig
+    nΩ::Int         = 40
+    η::Float64      = NaN
+    wide::Float64   = 6.0
+    nwide::Int      = 1601
+    narrow::Float64 = 2.5
+    margin::Float64 = 2.0
+end
+kdω(p::KParams, c::KernelConfig) = p.Ω / c.nΩ
+keta(p::KParams, c::KernelConfig) = isnan(c.η) ? 5 * kdω(p, c) : c.η
+
+"Indices s (ω = s dω) de las dos ventanas: ancha (en γ̃) y estrecha (en Ω)."
+function kernel_windows(p::KParams, c::KernelConfig)
+    dω = kdω(p, c)
+    K  = (c.nwide - 1) ÷ 2
+    st = max(1, round(Int, c.wide * γt(p) / (K * dω)))
+    sw = collect(-K*st:st:K*st)
+    Kn = round(Int, c.narrow * c.nΩ)
+    sn = collect(-Kn:Kn)
+    return sw, sn
+end
+
+"""
+    kernel_chi(i, j, p, c; svals) -> (χ, iχ')
+
+χ̌ y i ∂_ω χ̌ de las 6 componentes (KCOMP) del par (i,j) para ω = s dω, s ∈ svals.
+Devuelve dos matrices (length(svals), 6).
+"""
+function kernel_chi(i::Int, j::Int, p::KParams, c::KernelConfig; svals::AbstractVector{Int})
+    dω = kdω(p, c); η = keta(p, c); nΩ = c.nΩ
+    smin, smax = extrema(svals)
+    # soporte de los factores lesser: [Lmin, Lmax] (banda + estados ligados + Fermi)
+    Lmin = -(sqrt(4γt(p)^2 + p.J_sd^2) + c.margin)
+    Lmax = p.μ + (isfinite(p.β) ? 40 / p.β : 0.0) + 2p.Ω
+    jmin = floor(Int, (Lmin - p.Ω) / dω) - smax - 1           # ω' de la integral
+    jmax = ceil(Int, (Lmax + p.Ω) / dω) - smin + 1
+    qmin = jmin + smin - nΩ; qmax = jmax + smax + nΩ          # ω+ω'+bΩ
+    Vij, Dij = coeff_table(qmin:qmax, dω, i, j, p; η = η, withder = true)
+    Vji, _   = coeff_table(jmin:jmax, dω, j, i, p; η = η, withder = false)
+    pre  = -im * p.J_sd * dω / (2π)
+    χ    = zeros(ComplexF64, length(svals), 6)
+    iχp  = zeros(ComplexF64, length(svals), 6)
+    kernel_point!(χ, iχp, 1, svals[1], Vij, Dij, Vji, jmin, jmax, qmin, nΩ, pre)   # compila en el hilo principal
+    @threads for is in eachindex(svals)
+        kernel_point!(χ, iχp, is, svals[is], Vij, Dij, Vji, jmin, jmax, qmin, nΩ, pre)
+    end
+    return χ, iχp
+end
+
+"Integral en ω' para un solo ω = s dω (fila is de χ e iχp)."
+@noinline function kernel_point!(χ, iχp, is::Int, s::Int, Vij, Dij, Vji,
+                                 jmin::Int, jmax::Int, qmin::Int, nΩ::Int, pre::ComplexF64)
+    acc = zeros(ComplexF64, 6); accd = zeros(ComplexF64, 6)
+    for jj in jmin:jmax
+        q  = jj + s - qmin + 1                                     # columna de ω+ω'
+        Y  = view(Vji, :, jj - jmin + 1)
+        tv = tsums(view(Vij, :, q), view(Vij, :, q - nΩ), view(Vij, :, q + nΩ), Y)
+        td = tsums(view(Dij, :, q), view(Dij, :, q - nΩ), view(Dij, :, q + nΩ), Y)
+        for k in 1:6
+            acc[k] += tv[k]; accd[k] += td[k]
+        end
+    end
+    for k in 1:6
+        χ[is, k]   = pre * acc[k]
+        iχp[is, k] = im * pre * accd[k]
+    end
+    return nothing
+end
+
+"""
+Escribe el kernel de varios pares:
+    <datadir>/kernel_chi_m{i}n{j}.csv  ventana, ω, Re/Im de χ̌ y de i∂_ωχ̌ (6 componentes)
+    <datadir>/kernel_chi0_<pares>.csv  χ̌(0) e i∂_ωχ̌(0) de todos los pares
+Imprime la comprobacion de realidad de k = 0: Im χ̌_0(0) = 0 e Im[i∂χ̌_0(0)] = 0.
+"""
+function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString)
+    mkpath(datadir)
+    dω = kdω(p, c); η = keta(p, c)
+    sw, sn = kernel_windows(p, c)
+    svals = sort(unique(vcat(sw, sn)))
+    pos = Dict(s => k for (k, s) in enumerate(svals))
+    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g nOmega=%d wide=%.15g nwide=%d narrow=%.15g margin=%.15g\n",
+                    p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, η, c.nΩ, c.wide, c.nwide, c.narrow, c.margin)
+    rows0 = String[]
+    @printf("kernel: dω=%.3e (Ω/%d)  η=%.3e  ventana ancha ±%.2f γ̃ (%d pts)  estrecha ±%.2f Ω (%d pts)\n",
+            dω, c.nΩ, η, c.wide, length(sw), c.narrow, length(sn))
+    for (i, j) in pairs
+        t0 = time()
+        χ, iχp = kernel_chi(i, j, p, c; svals = svals)
+        path = joinpath(datadir, "kernel_chi_m$(i)n$(j).csv")
+        open(path, "w") do io
+            print(io, meta)
+            print(io, "window,omega")
+            for k in KCOMP
+                print(io, ",Re_chi_", k, ",Im_chi_", k, ",Re_idchi_", k, ",Im_idchi_", k)
+            end
+            println(io)
+            for (lab, ss) in (("gamma", sw), ("Omega", sn)), s in ss
+                r = pos[s]
+                @printf(io, "%s,%.12e", lab, s * dω)
+                for k in 1:6
+                    @printf(io, ",%.12e,%.12e,%.12e,%.12e", real(χ[r, k]), imag(χ[r, k]),
+                            real(iχp[r, k]), imag(iχp[r, k]))
+                end
+                println(io)
+            end
+        end
+        r0 = pos[0]
+        for (k, lab) in enumerate(KCOMP)
+            push!(rows0, @sprintf("%d,%d,%s,%.15e,%.15e,%.15e,%.15e", i, j, lab,
+                                  real(χ[r0, k]), imag(χ[r0, k]), real(iχp[r0, k]), imag(iχp[r0, k])))
+        end
+        rel(z) = abs(imag(z)) / max(abs(z), 1e-300)
+        @printf("  (%d,%d) en %.1f s -> %s\n", i, j, time() - t0, path)
+        @printf("      realidad k=0 en ω=0, |Im|/|z|:  χ̌ xx %.1e  yy %.1e  xz %.1e   i∂χ̌ xx %.1e  yy %.1e  xz %.1e\n",
+                rel(χ[r0, 1]), rel(χ[r0, 2]), rel(χ[r0, 3]), rel(iχp[r0, 1]), rel(iχp[r0, 2]), rel(iχp[r0, 3]))
+    end
+    path0 = joinpath(datadir, "kernel_chi0_" * join(["$i-$j" for (i, j) in pairs], "_") * ".csv")
+    open(path0, "w") do io
+        print(io, meta)
+        println(io, "m,n,comp,Re_chi0,Im_chi0,Re_idchi0,Im_idchi0")
+        foreach(r -> println(io, r), rows0)
+    end
+    println("  -> ", path0)
+    return nothing
+end
+
 """
 Escribe la malla en CSV: omega, m, n y Re/Im de cada uno de los 12 escalares.
 """
@@ -335,8 +610,18 @@ function _validate_body(FA::Module, p::KParams, η::Real, M::Int)
             end
         end
     end
+    # derivada exacta (Jet) frente a diferencias centradas de 4o orden, h = η/50
+    ed = sd = 0.0; h = η / 50
+    for ω in range(-2.3, 1.7; length = 41), (m, n) in ((1, 1), (1, 2), (2, 1), (3, 2))
+        cj = lead_coeffs(lead_tables(Jet(ω, 1.0), p, η, max(m, n)), central(Jet(ω, 1.0), p, η), m, n, p)
+        f(x) = collect(lead_coeffs(x, m, n, p; η = η))
+        fd = (8 .* (f(ω + h) .- f(ω - h)) .- (f(ω + 2h) .- f(ω - 2h))) ./ (12h)
+        dj = [v.d for v in cj]
+        ed = max(ed, maximum(abs.(dj .- fd))); sd = max(sd, maximum(abs.(fd)))
+    end
     ok(x) = x < 1e-10 ? "OK" : "FALLA"
     println("="^72)
+    @printf("  ∂_ω exacta (Jet) vs diferencias finitas: %.1e [%s]\n", ed / sd, ed / sd < 1e-6 ? "OK" : "FALLA")
     @printf("kernel_elements.jl  vs  fully_analitical_inbedding_leads.jl   (m,n ≤ %d, η = %.1e)\n", M, η)
     @printf("  𝒢ʳ_{mn,k}: %.1e [%s]\n", er / sr, ok(er / sr))
     @printf("  𝒢<_{mn,k}: %.1e [%s]\n", el / sl, ok(el / sl))
@@ -365,6 +650,14 @@ Copia de p con los campos de `kw` reemplazados (para barridos desde Julia):
 """
 with(p::KParams; kw...) = KParams(; (f => get(kw, f, getfield(p, f)) for f in fieldnames(KParams))...)
 
+"""
+Etiqueta a partir de la carpeta de la corrida de TDNEGF, sin los campos que solo
+tienen sentido alli (buf.., adyn..):  setup2_..._Om0p005_buf4_adyn0p0 -> setup2_..._Om0p005
+"""
+run_tag(params::AbstractString) =
+    join(filter(t -> !startswith(t, "buf") && !startswith(t, "adyn"),
+                split(basename(dirname(abspath(params))), '_')), '_')
+
 "Numero para etiquetas: %g con '.' -> 'p' y '-' -> 'm' (0.005 -> 0p005)."
 tagnum(x::Real) = replace(@sprintf("%g", x), "." => "p", "-" => "m")
 
@@ -388,17 +681,22 @@ end
 const OVERRIDES = ("--gamma", "--gso", "--jsd", "--theta", "--Omega", "--mu", "--beta")
 
 function main(args = ARGS)
-    opt = Dict("--params" => DEFAULT_PARAMS, "--pairs" => "1,1", "--wmin" => "-2.5",
-               "--wmax" => "2.5", "--nw" => "20001", "--eta" => "", "--out" => "")
+    opt = Dict("--params" => DEFAULT_PARAMS, "--pairs" => "1,1;1,2;2,1;2,2", "--wmin" => "-3.5",
+               "--wmax" => "3.5", "--nw" => "28001", "--eta" => "", "--out" => "", "--datadir" => "",
+               "--k-nomega" => "40", "--k-eta" => "", "--k-wide" => "6.0", "--k-nwide" => "1601",
+               "--k-narrow" => "2.5", "--k-margin" => "2.0")
     for k in OVERRIDES
         opt[k] = ""
     end
     validate_only = false
+    do_kernel = false
     i = 1
     while i ≤ length(args)
         a = args[i]
         if a == "--validate"
             validate_only = true; i += 1
+        elseif a == "--kernel"
+            do_kernel = true; i += 1
         elseif haskey(opt, a) && i < length(args)
             opt[a] = args[i+1]; i += 2
         else
@@ -408,25 +706,36 @@ function main(args = ARGS)
     p = build_params(opt["--params"], opt)
     overridden = opt["--params"] == "none" || any(!isempty(opt[k]) for k in OVERRIDES)
     if validate_only
-        validate(p)
+        Base.invokelatest(validate, p)          # llamadas dinamicas: la inferencia de
+        return nothing                          # main no recorre todo el arbol de llamadas
+    end
+    pairs = parse_pairs(opt["--pairs"])
+    # salida por defecto: output/<tag>/data/...
+    # tag = carpeta del params.txt, o la etiqueta de los valores si hay overrides
+    tag = overridden ? param_tag(p) : run_tag(opt["--params"])
+    datadir = isempty(opt["--datadir"]) ? joinpath(@__DIR__, "output", tag, "data") : opt["--datadir"]
+    if do_kernel
+        c = KernelConfig(; nΩ = parse(Int, opt["--k-nomega"]),
+                           η = isempty(opt["--k-eta"]) ? NaN : parse(Float64, opt["--k-eta"]),
+                           wide = parse(Float64, opt["--k-wide"]), nwide = parse(Int, opt["--k-nwide"]),
+                           narrow = parse(Float64, opt["--k-narrow"]), margin = parse(Float64, opt["--k-margin"]))
+        @printf("γ̃=%.4f θ_SO=%.4f J_sd=%.3f θ=%.1f° Ω=%.4g μ=%.2f β=%.1f | pares %s | hilos %d\n",
+                γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β,
+                join(["($m,$n)" for (m, n) in pairs], " "), nthreads())
+        Base.invokelatest(kernel_run, pairs, p, c, datadir)
         return nothing
     end
     ωs = range(parse(Float64, opt["--wmin"]), parse(Float64, opt["--wmax"]);
                length = parse(Int, opt["--nw"]))
     η  = isempty(opt["--eta"]) ? 2 * step(ωs) : parse(Float64, opt["--eta"])
-    pairs = parse_pairs(opt["--pairs"])
-    # salida por defecto: output/<tag>/data/kernel_elements_<pares>.csv
-    # tag = carpeta del params.txt, o la etiqueta de los valores si hay overrides
-    tag = overridden ? param_tag(p) : basename(dirname(abspath(opt["--params"])))
     out = isempty(opt["--out"]) ?
-          joinpath(@__DIR__, "output", tag, "data",
-                   "kernel_elements_" * join(["$m-$n" for (m, n) in pairs], "_") * ".csv") :
+          joinpath(datadir, "kernel_elements_" * join(["$m-$n" for (m, n) in pairs], "_") * ".csv") :
           opt["--out"]
     @printf("γ̃=%.4f θ_SO=%.4f J_sd=%.3f θ=%.1f° Ω=%.4g μ=%.2f β=%.1f | Nω=%d dω=%.2e η=%.2e | pares %s | hilos %d\n",
             γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β, length(ωs), step(ωs), η,
             join(["($m,$n)" for (m, n) in pairs], " "), nthreads())
     t0 = time()
-    H  = harmonics_grid(ωs, pairs, p; η = η)
+    H  = Base.invokelatest(harmonics_grid, ωs, pairs, p; η = η)
     @printf("  armonicos calculados en %.2f s\n", time() - t0)
     println("  -> ", write_csv(out, ωs, pairs, H, p, η))
     return nothing
