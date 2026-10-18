@@ -48,6 +48,8 @@ Uso desde la linea de comandos (lo llama plot_kernel_elements.py):
     julia -t auto kernel_elements.jl --chi0 --sites 10       # solo χ̌(0), i∂χ̌(0), pares [1,10]^2
           [--pairs "..."] [--k-nomega 40] [--k-eta η] [--k-margin 2.0] [--datadir DIR]
       Escribe kernel_chi0_sites1-10.csv (o kernel_chi0_<pares>.csv) para llg_elements.jl.
+    --sites N vale para --kernel, --tau y --chi0 (todos los pares de [1,N]^2).
+    --tag NOMBRE fija la carpeta output/NOMBRE (si no, la de params.txt o la de los valores).
 
 Orden de las 12 columnas complejas (COEFS):
     alpha_r beta_r gp_r gm_r  alpha_a beta_a gp_a gm_a  alpha_l beta_l gp_l gm_l
@@ -506,7 +508,7 @@ Escribe el kernel de varios pares:
     <datadir>/kernel_chi0_<pares>.csv  χ̌(0) e i∂_ωχ̌(0) de todos los pares
 Imprime la comprobacion de realidad de k = 0: Im χ̌_0(0) = 0 e Im[i∂χ̌_0(0)] = 0.
 """
-function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString)
+function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString, label::AbstractString)
     mkpath(datadir)
     dω = kdω(p, c); η = keta(p, c)
     sw, sn = kernel_windows(p, c)
@@ -548,7 +550,8 @@ function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString)
         @printf("      realidad k=0 en ω=0, |Im|/|z|:  χ̌ xx %.1e  yy %.1e  xz %.1e   i∂χ̌ xx %.1e  yy %.1e  xz %.1e\n",
                 rel(χ[r0, 1]), rel(χ[r0, 2]), rel(χ[r0, 3]), rel(iχp[r0, 1]), rel(iχp[r0, 2]), rel(iχp[r0, 3]))
     end
-    path0 = joinpath(datadir, "kernel_chi0_" * join(["$i-$j" for (i, j) in pairs], "_") * ".csv")
+    # resumen en ω = 0 de esta corrida (el de la LLG lo escribe --chi0: kernel_chi0_<label>.csv)
+    path0 = joinpath(datadir, "kernel_chi0_kernel_" * label * ".csv")
     open(path0, "w") do io
         print(io, meta)
         println(io, "m,n,comp,Re_chi0,Im_chi0,Re_idchi0,Im_idchi0")
@@ -773,9 +776,17 @@ function tau_run(pairs, p::KParams, c::TauConfig, datadir::AbstractString)
         caus  = maximum(abs.(χ[τs .< -2.0, :])) / maximum(abs.(χ))
         caus0 = maximum(abs.(χ[(τs .< -0.5 * c.dτ) .& (τs .>= -2.0), :])) / maximum(abs.(χ))
         reim = [maximum(abs.(imag.(χ[:, k]))) / maximum(abs.(χ[:, k])) for k in 1:3]
+        # tiempo de memoria: primer τ ≥ 0 a partir del cual la envolvente de los k = 0
+        # queda siempre por debajo del 1 % de su maximo
+        pos  = findall(τs .>= 0)
+        env  = [maximum(abs.(χ[r, 1:3])) for r in pos]
+        tail = reverse(accumulate(max, reverse(env)))
+        kmem = findfirst(<(0.01 * maximum(env)), tail)
+        τmem = kmem === nothing ? Inf : τs[pos[kmem]]
         @printf("  (%d,%d) en %.1f s -> %s\n", i, j, time() - t0, path)
         @printf("      causalidad max|χ̌|/max|χ̌|: τ<-2 %.1e  (-2≤τ<0: %.1e, Gibbs)   realidad k=0 max|Im|/max|χ̌|: xx %.1e  yy %.1e  xz %.1e\n",
                 caus, caus0, reim...)
+        @printf("      memoria: τ_mem(1%%) = %.1f   Ω τ_mem = %.3f\n", τmem, p.Ω * τmem)
     end
     return nothing
 end
@@ -920,7 +931,7 @@ function main(args = ARGS)
                "--k-nomega" => "40", "--k-eta" => "", "--k-wide" => "6.0", "--k-nwide" => "1601",
                "--k-narrow" => "2.5", "--k-margin" => "2.0",
                "--t-dtau" => "0.1", "--t-taumax" => "", "--t-log2n" => "22", "--t-eta" => "5e-5",
-               "--sites" => "")
+               "--sites" => "", "--tag" => "")
     for k in OVERRIDES
         opt[k] = ""
     end
@@ -962,7 +973,7 @@ function main(args = ARGS)
     end
     # salida por defecto: output/<tag>/data/...
     # tag = carpeta del params.txt, o la etiqueta de los valores si hay overrides
-    tag = overridden ? param_tag(p) : run_tag(opt["--params"])
+    tag = !isempty(opt["--tag"]) ? opt["--tag"] : overridden ? param_tag(p) : run_tag(opt["--params"])
     datadir = isempty(opt["--datadir"]) ? joinpath(@__DIR__, "output", tag, "data") : opt["--datadir"]
     if do_tau
         c = TauConfig(; dτ = parse(Float64, opt["--t-dtau"]),
@@ -991,7 +1002,7 @@ function main(args = ARGS)
         @printf("γ̃=%.4f θ_SO=%.4f J_sd=%.3f θ=%.1f° Ω=%.4g μ=%.2f β=%.1f | pares %s | hilos %d\n",
                 γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β,
                 join(["($m,$n)" for (m, n) in pairs], " "), nthreads())
-        Base.invokelatest(kernel_run, pairs, p, c, datadir)
+        Base.invokelatest(kernel_run, pairs, p, c, datadir, plabel)
         return nothing
     end
     ωs = range(parse(Float64, opt["--wmin"]), parse(Float64, opt["--wmax"]);
