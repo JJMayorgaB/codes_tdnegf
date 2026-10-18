@@ -22,15 +22,24 @@ en la LLG (J_sd y Ω se leen del encabezado del CSV):
     damping (multiplica D_t m, adimensional como un Gilbert):  g J_sd |X|
 Escribe llg_elements_<pares>.csv junto al archivo de entrada.
 
+Cualquier conjunto de pares: los elementos se calculan para todos los pares del
+CSV; se imprimen en detalle solo las configuraciones D=0, F=a, F=b pedidas con
+--configs (por defecto "1,2;3,6;5,9", las que existan en el archivo).
+Escribe en la carpeta del CSV:
+    llg_elements_<label>.csv     i, j, tipo, elemento, valor, escala (todos los pares)
+    llg_elements_SA_<label>.csv  i<j: partes simetrica (S) y antisimetrica (A) en sitio
+
 Uso:
-    julia llg_elements.jl                          # setup2, pares 1,1;1,2;2,1;2,2, g = 1
-    julia llg_elements.jl RUTA/kernel_chi0_<pares>.csv [--g 1.0]
+    julia llg_elements.jl                                   # sites1-10 si existe, si no 1,1;1,2;2,1;2,2
+    julia llg_elements.jl RUTA/kernel_chi0_sites1-10.csv [--g 1.0] [--configs "1,2;3,6;5,9"]
 =#
 
 using Printf
 
-const DEFAULT_FILE = joinpath(@__DIR__, "output", "setup2_gso0p1_jsd0p2_th10deg_Om0p005", "data",
-                              "kernel_chi0_1-1_1-2_2-1_2-2.csv")
+const DEFAULT_DIR  = joinpath(@__DIR__, "output", "setup2_gso0p1_jsd0p2_th10deg_Om0p005", "data")
+const DEFAULT_FILE = let f = joinpath(DEFAULT_DIR, "kernel_chi0_sites1-10.csv")
+    isfile(f) ? f : joinpath(DEFAULT_DIR, "kernel_chi0_1-1_1-2_2-1_2-2.csv")
+end
 
 const NAMES_A = ("J", "Γxx", "Γyy", "Γzz", "Γxz", "Γxy", "Γyz", "tx", "ty", "tz")
 const NAMES_D = ("α", "Λxx", "Λyy", "Λzz", "Λxz", "Λxy", "Λyz", "rx", "ry", "rz")
@@ -104,59 +113,33 @@ function read_meta(path::AbstractString)
     return d["J_sd"], d["Omega"]
 end
 
-function main(args = ARGS)
-    path = DEFAULT_FILE; g = 1.0
-    i = 1
-    while i ≤ length(args)
-        if args[i] == "--g" && i < length(args)
-            g = parse(Float64, args[i+1]); i += 2
-        else
-            path = args[i]; i += 1
-        end
-    end
-    isfile(path) || error("no encuentro $path (corre antes kernel_elements.jl --kernel)")
-    data, pairs = read_chi0(path)
-    Jsd, Ω = read_meta(path)
-    scale(v, kind) = kind == "intercambio" ? g * Jsd * abs(v) / Ω : g * Jsd * abs(v)
-    println("="^78)
-    println("Elementos de la LLG efectiva (marco rotante) desde ", basename(path))
-    @printf("J_sd = %g   Ω = %g   g = %g\n", Jsd, Ω, g)
-    println("="^78)
-
-    EA = Dict{Tuple{Int,Int},NTuple{10,Float64}}()
-    ED = Dict{Tuple{Int,Int},NTuple{10,Float64}}()
-    for pr in pairs
-        x  = data[pr]
-        ea, ia = elements(Dict(k => v[1] for (k, v) in x))
-        ed, id = elements(Dict(k => v[2] for (k, v) in x))
-        EA[pr] = ea; ED[pr] = ed
+"""
+Configuracion D=0, F=a, F=b: imprime sus 4 pares (a,a), (b,b), (a,b), (b,a) con
+matrices, la parte S/A en sitio de (a,b) y la lista de sus elementos ordenada por
+magnitud, con la escala en la LLG.
+"""
+function show_config(a, b, EA, ED, IA, ID, scale)
+    prs = [(a, a), (b, b), (a, b), (b, a)]
+    all(haskey(EA, pr) for pr in prs) || (println("\n(configuracion F=$a, F=$b: faltan pares, se omite)"); return)
+    println("\n", "#"^78, "\n# configuracion D=0, F=$a, F=$b\n", "#"^78)
+    for pr in prs
         i, j = pr
         @printf("\npar (i,j) = (%d,%d)%s   [comprobacion: max|Im k=0|: χ̌ %.1e, i∂χ̌ %.1e]\n",
-                i, j, i == j ? " (on-site: J no da torque)" : "", ia, id)
-        show_block("intercambio", NAMES_A, ea)
-        show_block("damping", NAMES_D, ed)
-        show_matrix("Ā_ij", tensor(ea))
-        show_matrix("D̄_ij", tensor(ed))
+                i, j, i == j ? " (on-site: J no da torque)" : "", IA[pr], ID[pr])
+        show_block("intercambio", NAMES_A, EA[pr])
+        show_block("damping", NAMES_D, ED[pr])
+        show_matrix("Ā_ij", tensor(EA[pr]))
+        show_matrix("D̄_ij", tensor(ED[pr]))
     end
-
-    # parte simetrica / antisimetrica en sitio de los pares fuera de la diagonal
-    for (i, j) in pairs
-        (i < j && haskey(EA, (j, i))) || continue
-        @printf("\nsitios (%d,%d) y (%d,%d): X^S = (X_ij + X_ji)/2,  X^A = (X_ij - X_ji)/2\n", i, j, j, i)
-        for (names, E) in ((NAMES_A, EA), (NAMES_D, ED))
-            for (k, nm) in enumerate(names)
-                s = (E[(i, j)][k] + E[(j, i)][k]) / 2
-                a = (E[(i, j)][k] - E[(j, i)][k]) / 2
-                @printf("      %-4s   S = %+.6e   A = %+.6e\n", nm, s, a)
-            end
-        end
+    @printf("\nsitios (%d,%d) y (%d,%d): X^S = (X_ij + X_ji)/2,  X^A = (X_ij - X_ji)/2\n", a, b, b, a)
+    for (names, E) in ((NAMES_A, EA), (NAMES_D, ED)), (k, nm) in enumerate(names)
+        @printf("      %-4s   S = %+.6e   A = %+.6e\n", nm,
+                (E[(a, b)][k] + E[(b, a)][k]) / 2, (E[(a, b)][k] - E[(b, a)][k]) / 2)
     end
-
-    # todos los elementos ordenados por magnitud
     rows = Tuple{Float64,String,Tuple{Int,Int},String}[]
-    for pr in pairs, (names, E, kind) in ((NAMES_A, EA, "intercambio"), (NAMES_D, ED, "damping"))
+    for pr in prs, (names, E, kind) in ((NAMES_A, EA, "intercambio"), (NAMES_D, ED, "damping"))
         for (k, nm) in enumerate(names)
-            (nm == "J" && pr[1] == pr[2]) && continue          # J_ii no da torque
+            (nm == "J" && pr[1] == pr[2]) && continue
             push!(rows, (E[pr][k], nm, pr, kind))
         end
     end
@@ -164,20 +147,75 @@ function main(args = ARGS)
     vmax = abs(rows[1][1])
     @printf("\n%d elementos (sin J_ii), ordenados por |valor|:\n", length(rows))
     println("   escala: intercambio -> g J_sd |X|/Ω ;  damping -> g J_sd |X|")
-    @printf("   %4s  %-12s %-6s %-6s %14s %10s %12s\n", "#", "tipo", "elem", "(i,j)", "valor", "/max", "escala")
+    @printf("   %4s  %-12s %-6s %-7s %14s %10s %12s\n", "#", "tipo", "elem", "(i,j)", "valor", "/max", "escala")
     for (r, (v, nm, pr, kind)) in enumerate(rows)
         @printf("   %4d  %-12s %-6s (%d,%d)  %+.6e  %9.1e  %10.2e%s\n", r, kind, nm, pr..., v, abs(v) / vmax,
                 scale(v, kind), kind == "intercambio" ? " Ω" : "")
     end
+end
 
-    out = joinpath(dirname(abspath(path)), replace(basename(path), "kernel_chi0_" => "llg_elements_"))
-    open(out, "w") do io
-        println(io, "i,j,tipo,elemento,valor,escala")
-        for (v, nm, pr, kind) in rows
-            @printf(io, "%d,%d,%s,%s,%.15e,%.6e\n", pr..., kind, nm, v, scale(v, kind))
+function main(args = ARGS)
+    path = DEFAULT_FILE; g = 1.0; cfgs = "1,2;3,6;5,9"
+    i = 1
+    while i ≤ length(args)
+        if args[i] == "--g" && i < length(args)
+            g = parse(Float64, args[i+1]); i += 2
+        elseif args[i] == "--configs" && i < length(args)
+            cfgs = args[i+1]; i += 2
+        else
+            path = args[i]; i += 1
         end
     end
-    println("\n  -> ", out)
+    isfile(path) || error("no encuentro $path (corre antes kernel_elements.jl --chi0 o --kernel)")
+    data, pairs = read_chi0(path)
+    Jsd, Ω = read_meta(path)
+    scale(v, kind) = kind == "intercambio" ? g * Jsd * abs(v) / Ω : g * Jsd * abs(v)
+    println("="^78)
+    println("Elementos de la LLG efectiva (marco rotante) desde ", basename(path))
+    @printf("J_sd = %g   Ω = %g   g = %g   |   %d pares\n", Jsd, Ω, g, length(pairs))
+    println("="^78)
+
+    EA = Dict{Tuple{Int,Int},NTuple{10,Float64}}(); ED = Dict{Tuple{Int,Int},NTuple{10,Float64}}()
+    IA = Dict{Tuple{Int,Int},Float64}();            ID = Dict{Tuple{Int,Int},Float64}()
+    for pr in pairs
+        x = data[pr]
+        EA[pr], IA[pr] = elements(Dict(k => v[1] for (k, v) in x))
+        ED[pr], ID[pr] = elements(Dict(k => v[2] for (k, v) in x))
+    end
+    @printf("comprobacion (todos los pares): max|Im k=0|  χ̌ %.1e   i∂χ̌ %.1e\n",
+            maximum(values(IA)), maximum(values(ID)))
+
+    # configuraciones D-F-F pedidas
+    for tok in split(cfgs, ';'; keepempty = false)
+        a, b = parse.(Int, split(strip(tok), ','))
+        show_config(a, b, EA, ED, IA, ID, scale)
+    end
+
+    stem = replace(basename(path), "kernel_chi0_" => "", ".csv" => "")
+    dir  = dirname(abspath(path))
+    # tabla larga: todos los pares y elementos (incluye J_ii, marcado sin torque por la escala)
+    out = joinpath(dir, "llg_elements_" * stem * ".csv")
+    open(out, "w") do io
+        println(io, "i,j,tipo,elemento,valor,escala")
+        for pr in pairs, (names, E, kind) in ((NAMES_A, EA, "intercambio"), (NAMES_D, ED, "damping"))
+            for (k, nm) in enumerate(names)
+                @printf(io, "%d,%d,%s,%s,%.15e,%.6e\n", pr..., kind, nm, E[pr][k], scale(E[pr][k], kind))
+            end
+        end
+    end
+    # parte simetrica / antisimetrica en sitio de todos los pares i < j con (j,i) disponible
+    outSA = joinpath(dir, "llg_elements_SA_" * stem * ".csv")
+    open(outSA, "w") do io
+        println(io, "i,j,tipo,elemento,S,A")
+        for (i, j) in pairs
+            (i < j && haskey(EA, (j, i))) || continue
+            for (names, E, kind) in ((NAMES_A, EA, "intercambio"), (NAMES_D, ED, "damping")), (k, nm) in enumerate(names)
+                @printf(io, "%d,%d,%s,%s,%.15e,%.15e\n", i, j, kind, nm,
+                        (E[(i, j)][k] + E[(j, i)][k]) / 2, (E[(i, j)][k] - E[(j, i)][k]) / 2)
+            end
+        end
+    end
+    println("\n  -> ", out, "\n  -> ", outSA)
     return nothing
 end
 

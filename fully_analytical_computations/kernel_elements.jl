@@ -45,6 +45,9 @@ Uso desde la linea de comandos (lo llama plot_kernel_elements.py):
           [--t-dtau 0.1] [--t-taumax T] [--t-log2n 22] [--t-eta 5e-5] [--datadir DIR]
       FFT de los armonicos analiticos (ω ∈ [-π/dτ, π/dτ), N = 2^log2n) y producto en τ.
       Escribe kernel_tau_m{i}n{j}.csv (τ ∈ [-τmax, τmax], 6 componentes) en DIR.
+    julia -t auto kernel_elements.jl --chi0 --sites 10       # solo χ̌(0), i∂χ̌(0), pares [1,10]^2
+          [--pairs "..."] [--k-nomega 40] [--k-eta η] [--k-margin 2.0] [--datadir DIR]
+      Escribe kernel_chi0_sites1-10.csv (o kernel_chi0_<pares>.csv) para llg_elements.jl.
 
 Orden de las 12 columnas complejas (COEFS):
     alpha_r beta_r gp_r gm_r  alpha_a beta_a gp_a gm_a  alpha_l beta_l gp_l gm_l
@@ -555,6 +558,42 @@ function kernel_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString)
     return nothing
 end
 
+"""
+Solo χ̌_k(0) e i∂_ωχ̌_k(0) (sin ventanas en ω) para muchos pares: lo que necesita
+la LLG en la aproximacion de Markov. Escribe <datadir>/kernel_chi0_<label>.csv con
+el mismo formato que kernel_run (lo lee llg_elements.jl).
+"""
+function chi0_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString, label::AbstractString)
+    mkpath(datadir)
+    dω = kdω(p, c); η = keta(p, c)
+    meta = @sprintf("# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g nOmega=%d wide=0 nwide=1 narrow=0 margin=%.15g\n",
+                    p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, η, c.nΩ, c.margin)
+    @printf("kernel χ̌(0): dω=%.3e (Ω/%d)  η=%.3e  margen=%.2f  |  %d pares\n", dω, c.nΩ, η, c.margin, length(pairs))
+    rows = String[]
+    rel(z) = abs(imag(z)) / max(abs(z), 1e-300)
+    worst = (0.0, 0.0); t0 = time()
+    for (n, (i, j)) in enumerate(pairs)
+        χ, iχp = kernel_chi(i, j, p, c; svals = [0])
+        for (k, lab) in enumerate(KCOMP)
+            push!(rows, @sprintf("%d,%d,%s,%.15e,%.15e,%.15e,%.15e", i, j, lab,
+                                 real(χ[1, k]), imag(χ[1, k]), real(iχp[1, k]), imag(iχp[1, k])))
+        end
+        worst = (max(worst[1], maximum(rel(χ[1, k]) for k in 1:3)),
+                 max(worst[2], maximum(rel(iχp[1, k]) for k in 1:3)))
+        (n % 10 == 0 || n == length(pairs)) &&
+            @printf("  %3d/%d pares  (%.0f s)\n", n, length(pairs), time() - t0)
+    end
+    @printf("  realidad k=0 en ω=0, peor |Im|/|z| entre todos los pares:  χ̌ %.1e   i∂χ̌ %.1e\n", worst...)
+    path = joinpath(datadir, "kernel_chi0_" * label * ".csv")
+    open(path, "w") do io
+        print(io, meta)
+        println(io, "m,n,comp,Re_chi0,Im_chi0,Re_idchi0,Im_idchi0")
+        foreach(r -> println(io, r), rows)
+    end
+    println("  -> ", path)
+    return nothing
+end
+
 # ---------------------------------------------------------------- kernel en tiempo
 #=
 Kernel en tiempo, τ = t - t':
@@ -880,13 +919,15 @@ function main(args = ARGS)
                "--wmax" => "3.5", "--nw" => "28001", "--eta" => "", "--out" => "", "--datadir" => "",
                "--k-nomega" => "40", "--k-eta" => "", "--k-wide" => "6.0", "--k-nwide" => "1601",
                "--k-narrow" => "2.5", "--k-margin" => "2.0",
-               "--t-dtau" => "0.1", "--t-taumax" => "", "--t-log2n" => "22", "--t-eta" => "5e-5")
+               "--t-dtau" => "0.1", "--t-taumax" => "", "--t-log2n" => "22", "--t-eta" => "5e-5",
+               "--sites" => "")
     for k in OVERRIDES
         opt[k] = ""
     end
     validate_only = false
     do_kernel = false
     do_tau = false
+    do_chi0 = false
     i = 1
     while i ≤ length(args)
         a = args[i]
@@ -896,6 +937,8 @@ function main(args = ARGS)
             do_kernel = true; i += 1
         elseif a == "--tau"
             do_tau = true; i += 1
+        elseif a == "--chi0"
+            do_chi0 = true; i += 1
         elseif haskey(opt, a) && i < length(args)
             opt[a] = args[i+1]; i += 2
         else
@@ -908,7 +951,15 @@ function main(args = ARGS)
         Base.invokelatest(validate, p)          # llamadas dinamicas: la inferencia de
         return nothing                          # main no recorre todo el arbol de llamadas
     end
-    pairs = parse_pairs(opt["--pairs"])
+    # --sites N: todos los pares (i,j) ∈ [1,N]^2 (etiqueta sites1-N); si no, --pairs
+    if isempty(opt["--sites"])
+        pairs = parse_pairs(opt["--pairs"])
+        plabel = join(["$m-$n" for (m, n) in pairs], "_")
+    else
+        Ns = parse(Int, opt["--sites"])
+        pairs = [(m, n) for m in 1:Ns for n in 1:Ns]
+        plabel = "sites1-$Ns"
+    end
     # salida por defecto: output/<tag>/data/...
     # tag = carpeta del params.txt, o la etiqueta de los valores si hay overrides
     tag = overridden ? param_tag(p) : run_tag(opt["--params"])
@@ -921,6 +972,15 @@ function main(args = ARGS)
                 γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β,
                 join(["($m,$n)" for (m, n) in pairs], " "), nthreads())
         Base.invokelatest(tau_run, pairs, p, c, datadir)
+        return nothing
+    end
+    if do_chi0
+        c = KernelConfig(; nΩ = parse(Int, opt["--k-nomega"]),
+                           η = isempty(opt["--k-eta"]) ? NaN : parse(Float64, opt["--k-eta"]),
+                           margin = parse(Float64, opt["--k-margin"]))
+        @printf("γ̃=%.4f θ_SO=%.4f J_sd=%.3f θ=%.1f° Ω=%.4g μ=%.2f β=%.1f | hilos %d\n",
+                γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β, nthreads())
+        Base.invokelatest(chi0_run, pairs, p, c, datadir, plabel)
         return nothing
     end
     if do_kernel
