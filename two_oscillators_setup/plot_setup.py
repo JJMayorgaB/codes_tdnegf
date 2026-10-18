@@ -10,12 +10,14 @@ y escribe en <corrida>/figures/:
     rho_t            rho_ii: uu, dd, Re/Im ud en los 3 sitios          (2x2)
     bond_rho_t       rho_ij de los enlaces entre espines: Re (-), Im (--) (2x2)
     current_bond_n-m corriente de carga | de espin del enlace n -> m   (1x2)
+    (estas dos solo para LMMs consecutivos que son primeros vecinos, p. ej. DFF/F1-2
+     y FDF/Fm1-1; con los LMMs separados se omiten con un aviso)
     lead_currents_t  corrientes de los leads L (-) y R (--)            (1x2)
 Mismo estilo que analytical_computations/inbedding_leads_plot.py (de donde se
 importan rcParams, formato de ejes, colores de espin y bond_currents).
 
 Uso:
-    python plot_setup.py z_precession/output/setup1_<tag>  [otra_corrida ...]
+    python plot_setup.py y_precession/output/DFF/F3-6/<tag>  [otra_corrida ...]
     python plot_setup.py <corrida> --last-periods 3
 """
 
@@ -129,8 +131,13 @@ def plot_rho_sites(run, geo, T, t_min, figdir):
 
 
 def _enlaces_espin(geo):
+    """Enlaces entre LMMs consecutivos, solo si son primeros vecinos (d = 1)."""
     s = sorted(int(v) for v in geo['site'])
-    return [(s[0], s[1]), (s[1], s[2])]
+    enl = [(a, b) for a, b in zip(s[:-1], s[1:]) if b - a == 1]
+    if len(enl) < len(s) - 1:
+        print('  AVISO: hay LMMs consecutivos que no son primeros vecinos; '
+              f'enlaces entre espines graficados: {enl if enl else "ninguno"}')
+    return enl
 
 
 def plot_bond_rho(run, geo, T, t_min, figdir):
@@ -138,8 +145,10 @@ def plot_bond_rho(run, geo, T, t_min, figdir):
     role = {int(g['site']): g['role'] for _, g in geo.iterrows()}
     ent = (('uu', r'\uparrow\uparrow'), ('ud', r'\uparrow\downarrow'),
            ('du', r'\downarrow\uparrow'), ('dd', r'\downarrow\downarrow'))
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
     enl = _enlaces_espin(geo)
+    if not enl:
+        return
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
     for ax, (s, lab) in zip(axes.flat, ent):
         for k, (n, m) in enumerate(enl):
             b = d[(d['n'] == n) & (d['m'] == m)].sort_values('t')
@@ -236,7 +245,7 @@ def plot_lead_currents(run, T, t_min, figdir):
 
 def main():
     ap = argparse.ArgumentParser(description='Figuras de los setups de dos osciladores.')
-    ap.add_argument('runs', nargs='+', help='carpetas de corrida (<precesion>/output/<setup>_<tag>)')
+    ap.add_argument('runs', nargs='+', help='carpetas de corrida (<precesion>/output/<DFF|FDF>/<F..>/<tag>)')
     corte = ap.add_mutually_exclusive_group()
     corte.add_argument('--t-min', type=float, default=None,
                        help='graficar solo t >= t_min (en vez de la evolucion completa + ultimos 5T)')

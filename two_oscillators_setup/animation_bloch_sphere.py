@@ -10,9 +10,9 @@ Cada corrida es una columna:
     abajo  : M^x_m(t) de los 3 LMMs con un cursor en el tiempo actual
 
 Uso:
-    python animation_bloch_sphere.py z_precession/output/setup1_<tag>
-    python animation_bloch_sphere.py z_precession/output/setup1_<tag> z_precession/output/setup2_<tag> \
-                        y-precession/output/setup1_<tag> y-precession/output/setup2_<tag> \
+    python animation_bloch_sphere.py z_precession/output/FDF/Fm1-1/<tag>
+    python animation_bloch_sphere.py z_precession/output/FDF/Fm1-1/<tag> z_precession/output/DFF/F1-2/<tag> \
+                        y_precession/output/FDF/Fm1-1/<tag> y_precession/output/DFF/F1-2/<tag> \
                         --t-min 6283 --frame-skip 10 --out comparacion_setups.mp4
 Con una corrida el video queda en <corrida>/animation_bloch.mp4; con varias, en
 two_oscillators_setup/animations/ (o donde diga --out).

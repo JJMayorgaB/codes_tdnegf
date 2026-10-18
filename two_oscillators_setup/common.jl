@@ -2,11 +2,18 @@
 #=
 common.jl -- nucleo compartido de los setups de dos osciladores + driver.
 
-Cadena Rashba 1D de Nx = 2 N_BUF + 3 sitios electronicos, leads en los sitios 1
-y Nx, y TRES LMMs en los sitios contiguos N_BUF+1, N_BUF+2, N_BUF+3 (d = 1):
+Cadena Rashba 1D con leads en los sitios 1 y Nx y tres LMMs: el driver D y dos
+libres F en posiciones arbitrarias. Las posiciones de los F se dan con FPOS, las
+distancias con signo de cada F al driver (en sitios); la disposicion sale de los
+signos:
 
-    setup1 :  [buf] F  D  F [buf]     (driver en el centro, un libre a cada lado)
-    setup2 :  [buf] D  F  F [buf]     (driver a la izquierda, dos libres a su derecha)
+    FPOS = 1,2    [buf] D F F [buf]             disposicion DFF, carpeta F1-2   (= setup2)
+    FPOS = 3,6    [buf] D . . F . . F [buf]     disposicion DFF, carpeta F3-6
+    FPOS = -1,1   [buf] F D F [buf]             disposicion FDF, carpeta Fm1-1  (= setup1)
+
+Hay N_BUF sitios desnudos a la izquierda del primer LMM y a la derecha del
+ultimo, asi que Nx = 2 N_BUF + (ultimo - primero) + 1. Los LMMs se numeran
+m = 1, 2, 3 de izquierda a derecha.
 
 D = LMM con precesion prescrita (cono θ_max, frecuencia Ω) alrededor del eje
 de precesion (:z o :y); F = LMM libre que evoluciona con la LLG de Sunny bajo el
@@ -15,10 +22,15 @@ todo el amortiguamiento de los F sale de su acople con los electrones.
 
 Parametros fisicos y protocolo: los de analytical_computations/test_tdnegf/
 tdnegf_single_spin.jl (comparables con el Floquet analitico y el kernel).
+Variables de entorno: GSO, JSD, THETA (grados), OMEGA y FPOS.
 
-Uso (desde cada carpeta de precesion):
+Salida: <outroot>/<disposicion>/<separacion>/<param_tag>/, p. ej.
+    y_precession/output/DFF/F3-6/gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0/
+
+Uso:
     include(joinpath(@__DIR__, "..", "common.jl"))
-    run_setup(:setup1, :z; outroot = joinpath(@__DIR__, "output"))
+    run_setup(:setup1, :z; outroot = joinpath(@__DIR__, "output"))   # FPOS por defecto -1,1
+    run_config([3, 6], :y; outroot = ...)                              # posiciones arbitrarias
 =#
 
 using Pkg
@@ -42,7 +54,7 @@ const γ     = sqrt(1 - γso^2)        # |T̂| = sqrt(γ² + γso²) = 1: banda 
 const E_F   = 0.0
 const β     = 40.0
 const N_λ1, N_λ2 = 49, 30
-const j_sd  = 0.2
+const j_sd  = parse(Float64, get(ENV, "JSD", "0.2"))        # override: JSD=0.5
 const Δt    = 0.1
 const Nσ, N_orb, Ny = 2, 1, 1
 
@@ -63,25 +75,49 @@ const t_final = 20 * T_drive
 # salida: CSV cada OUT_STRIDE pasos (Δt_out = 2.0, ~628 puntos por periodo)
 const OUT_STRIDE = 20
 
-# geometria de cada setup: rol de los LMMs m = 1, 2, 3 (de izquierda a derecha)
-const LAYOUTS = Dict(:setup1 => (:F, :D, :F),
-                     :setup2 => (:D, :F, :F))
+# posiciones por defecto de los F (distancias con signo al driver) de los setups originales
+const DEFAULT_FPOS = Dict(:setup1 => [-1, 1],         # F D F
+                          :setup2 => [1, 2])          # D F F
+
+"\"3,6\" -> [3, 6];  \"-1,1\" -> [-1, 1]"
+parse_fpos(s::AbstractString) = [parse(Int, strip(x)) for x in split(s, ',') if !isempty(strip(x))]
 
 struct Cfg
-    setup::Symbol
+    layout::String                   # roles de izquierda a derecha: "DFF", "FDF", ...
+    sep::String                      # carpeta de las posiciones: "F1-2", "F3-6", "Fm1-1", ...
     axis::Symbol                     # eje de precesion del driver (:z o :y)
-    roles::NTuple{3,Symbol}
+    fpos::Vector{Int}                # distancias con signo de los F al driver (ordenadas)
+    roles::Vector{Symbol}            # rol del LMM m (de izquierda a derecha)
+    sites::Vector{Int}               # sitio electronico del LMM m
     N_BUF::Int
     Nx::Int
     damping_dyn::Float64
     outdir::String
 end
 
-spin_site(c::Cfg, m::Int) = c.N_BUF + m                     # sitio electronico del LMM m
-driven_spins(c::Cfg) = [m for m in 1:3 if c.roles[m] === :D]
-free_spins(c::Cfg)   = [m for m in 1:3 if c.roles[m] === :F]
-site_role(c::Cfg, s::Int) = (m = s - c.N_BUF; 1 <= m <= 3 ? String(c.roles[m]) :
-                                               (s <= c.N_BUF ? "bufL" : "bufR"))
+_sepnum(x::Int) = x < 0 ? "m$(-x)" : string(x)
+
+function make_cfg(fpos::AbstractVector{<:Integer}, axis::Symbol, N_BUF::Int, damping_dyn::Float64,
+                  outdir::AbstractString = "")
+    fp = sort(Int.(collect(fpos)))
+    (0 in fp || !allunique(fp)) && error("FPOS = $fpos: posiciones repetidas o sobre el driver")
+    off = sort(vcat(0, fp))                              # posiciones relativas al driver
+    roles = [o == 0 ? :D : :F for o in off]
+    sites = N_BUF + 1 .+ (off .- off[1])
+    Nx = 2 * N_BUF + (off[end] - off[1]) + 1
+    return Cfg(join(String.(roles)), "F" * join(_sepnum.(fp), "-"), axis, fp, roles, sites,
+               N_BUF, Nx, damping_dyn, String(outdir))
+end
+
+nspins(c::Cfg) = length(c.roles)
+spin_site(c::Cfg, m::Int) = c.sites[m]                      # sitio electronico del LMM m
+driven_spins(c::Cfg) = [m for m in 1:nspins(c) if c.roles[m] === :D]
+free_spins(c::Cfg)   = [m for m in 1:nspins(c) if c.roles[m] === :F]
+function site_role(c::Cfg, s::Int)
+    m = findfirst(==(s), c.sites)
+    m !== nothing && return String(c.roles[m])
+    return s < c.sites[1] ? "bufL" : (s > c.sites[end] ? "bufR" : "bare")
+end
 
 @inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
 param_tag(c::Cfg) = "gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg" *
@@ -125,9 +161,9 @@ function init_spins(c::Cfg)
     latvecs   = lattice_vectors(1.0, 1.0 * (1 + 1e-3), 4.0, 90, 90, 90)
     cryst     = Crystal(latvecs, [[0.5, 0.5, 0.0]])
     moments   = [1 => Moment(s = 1.0, g = 1.0)]
-    sys = System(cryst, moments, :dipole; dims = (3, 1, 1))
+    sys = System(cryst, moments, :dipole; dims = (nspins(c), 1, 1))
     e = axis_vec(c.axis)
-    for m in 1:3
+    for m in 1:nspins(c)
         sys.dipoles[m, 1, 1, 1] = Sunny.SVector(e[1], e[2], e[3])
     end
     return sys
@@ -136,7 +172,7 @@ end
 function full_dipoles(sys, c::Cfg)
     S = Matrix{SVector{3,Float64}}(undef, c.Nx, Ny)
     fill!(S, SVector{3,Float64}(0.0, 0.0, 0.0))
-    for m in 1:3
+    for m in 1:nspins(c)
         S[spin_site(c, m), 1] = SVector{3,Float64}(sys.dipoles[m, 1, 1, 1])
     end
     return S
@@ -158,10 +194,11 @@ prep_params(c::Cfg) = (γ = γ, γso = γso, j_sd = j_sd, θmax = θ_max, Ω = �
                        t_final = t_final, damping_relax = damping_relax,
                        damping_dyn = c.damping_dyn, kT = kT, out_stride = OUT_STRIDE)
 
-geometry(c::Cfg) = (setup = String(c.setup), axis = String(c.axis), N_BUF = c.N_BUF, Nx = c.Nx,
+geometry(c::Cfg) = (setup = c.layout, layout = c.layout, sep = c.sep, fpos = c.fpos,
+                    axis = String(c.axis), N_BUF = c.N_BUF, Nx = c.Nx,
                     Ny = Ny, Nσ = Nσ, N_orb = N_orb,
                     roles = [String(r) for r in c.roles],
-                    spin_sites = [spin_site(c, m) for m in 1:3])
+                    spin_sites = copy(c.sites))
 
 # salidas de texto
 const ENT = ((1, 1), (1, 2), (2, 1), (2, 2))            # orden de espin (↑,↓): uu, ud, du, dd
@@ -169,7 +206,7 @@ const ENT = ((1, 1), (1, 2), (2, 1), (2, 2))            # orden de espin (↑,�
 function write_geometry_csv(c::Cfg)
     open(joinpath(c.outdir, "geometry.csv"), "w") do io
         println(io, "m,site,role")
-        for m in 1:3
+        for m in 1:nspins(c)
             println(io, m, ",", spin_site(c, m), ",", c.roles[m])
         end
     end
@@ -177,12 +214,14 @@ end
 
 function write_params_txt(c::Cfg)
     open(joinpath(c.outdir, "params.txt"), "w") do io
-        println(io, "DOS OSCILADORES + DRIVER   setup = ", c.setup, "   eje de precesion = ", c.axis)
+        println(io, "DOS OSCILADORES + DRIVER   setup = ", c.layout, "   eje de precesion = ", c.axis)
+        println(io, "separacion = ", c.sep, "   (FPOS: distancias de los F al driver = ",
+                    join(c.fpos, ", "), ")")
         println(io, "param_tag = ", param_tag(c))
         println(io, "")
         println(io, "Nx = ", c.Nx, "   N_BUF = ", c.N_BUF, " (sitios desnudos a cada lado)")
         println(io, "leads en los sitios 1 y ", c.Nx)
-        for m in 1:3
+        for m in 1:nspins(c)
             println(io, "LMM m=", m, " -> sitio ", spin_site(c, m), "  (", c.roles[m], ")")
         end
         println(io, "")
@@ -216,13 +255,13 @@ end
 
 function write_spins_csv(c::Cfg, t, S_hist, idx)
     hdr = ["t"]
-    for m in 1:3, a in ("x", "y", "z")
+    for m in 1:nspins(c), a in ("x", "y", "z")
         push!(hdr, "M$(m)_$(a)")
     end
     data = Matrix{Float64}(undef, length(idx), length(hdr))
     for (r, i) in enumerate(idx)
         data[r, 1] = t[i]
-        for m in 1:3, a in 1:3
+        for m in 1:nspins(c), a in 1:3
             data[r, 1 + 3 * (m - 1) + a] = S_hist[a, m, i]
         end
     end
@@ -284,20 +323,39 @@ function write_bond_csv(c::Cfg, t_b, rho_t, H0, N_loc)
 end
 
 # corrida
-function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString,
+"""
+    run_setup(setup, axis; outroot, fpos = nothing, ...)
+
+setup = :setup1 (F D F) o :setup2 (D F F) solo fija las posiciones por defecto
+(DEFAULT_FPOS); si existe la variable de entorno FPOS, manda ella.
+"""
+function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString, fpos = nothing,
                    N_BUF::Int = 4, damping_dyn::Float64 = 0.0)
-    haskey(LAYOUTS, setup) || error("setup desconocido: $setup")
+    haskey(DEFAULT_FPOS, setup) || error("setup desconocido: $setup")
+    fp = fpos !== nothing ? fpos :
+         haskey(ENV, "FPOS") ? parse_fpos(ENV["FPOS"]) : DEFAULT_FPOS[setup]
+    return run_config(fp, axis; outroot = outroot, N_BUF = N_BUF, damping_dyn = damping_dyn)
+end
+
+"""
+    run_config(fpos, axis; outroot, N_BUF = 4, damping_dyn = 0.0)
+
+fpos = distancias con signo de los F al driver, p. ej. [3, 6] (D F F) o [-3, 3] (F D F).
+Salida en <outroot>/<disposicion>/<separacion>/<param_tag>/.
+"""
+function run_config(fpos::AbstractVector{<:Integer}, axis::Symbol; outroot::AbstractString,
+                    N_BUF::Int = 4, damping_dyn::Float64 = 0.0)
     axis in (:z, :y) || error("eje de precesion desconocido: $axis")
-    Nx = 2 * N_BUF + 3
-    c0 = Cfg(setup, axis, LAYOUTS[setup], N_BUF, Nx, damping_dyn, "")
-    outdir = joinpath(outroot, "$(setup)_" * param_tag(c0)); mkpath(outdir)
-    c = Cfg(setup, axis, LAYOUTS[setup], N_BUF, Nx, damping_dyn, outdir)
+    c0 = make_cfg(fpos, axis, N_BUF, damping_dyn)
+    outdir = joinpath(outroot, c0.layout, c0.sep, param_tag(c0)); mkpath(outdir)
+    c = make_cfg(fpos, axis, N_BUF, damping_dyn, outdir)
+    Nx, NS = c.Nx, nspins(c)
     BLAS.set_num_threads(N_BLAS)
 
     println("="^72)
-    @printf("DOS OSCILADORES + DRIVER   %s   precesion alrededor de %s\n", setup, axis)
+    @printf("DOS OSCILADORES + DRIVER   %s %s   precesion alrededor de %s\n", c.layout, c.sep, axis)
     @printf("Nx=%d  N_BUF=%d  LMMs en los sitios %s  roles %s\n", Nx, N_BUF,
-            string([spin_site(c, m) for m in 1:3]), string(c.roles))
+            string(c.sites), string(c.roles))
     @printf("γ=%.6f γso=%.3f j_sd=%.3f θ=%.1f° Ω=%.4f (T=%.1f)  damping relax/dyn = %.2f/%.2f\n",
             γ, γso, j_sd, rad2deg(θ_max), Ω, T_drive, damping_relax, damping_dyn)
     @printf("t_leads=%.0f  t_on=%.0f  t_rise=%.0f  t_final=%.0f (%.1f periodos de driver)\n",
@@ -341,7 +399,7 @@ function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString,
 
     N_steps = Int(round(t_final / Δt))
     obs = ObservablesTDNEGF(p_model; N_tmax = N_steps, N_leads = 2)
-    S_hist = Array{Float64}(undef, 3, 3, N_steps)
+    S_hist = Array{Float64}(undef, 3, NS, N_steps)
     idx_out = 1:OUT_STRIDE:N_steps
     Ns = p_blocks.dims_ρ_ab[1]
     rho_t = Array{ComplexF64}(undef, Ns, Ns, length(idx_out))     # ρ completa (el sistema es chico)
@@ -367,7 +425,7 @@ function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString,
             t_b[io] = intg.t
             rho_t[:, :, io] .= dv.ρ_ab
         end
-        for m in 1:3, a in 1:3
+        for m in 1:NS, a in 1:3
             S_hist[a, m, i] = sys.dipoles[m, 1, 1, 1][a]
         end
 
@@ -403,7 +461,7 @@ function run_setup(setup::Symbol, axis::Symbol; outroot::AbstractString,
             geometry = geometry(c), params = prep_params(c))
     try
         ckpt = joinpath(outdir, "checkpoint_t$(round(Int, t_final)).jld2")
-        S_final = [sys.dipoles[m, 1, 1, 1][a] for a in 1:3, m in 1:3]
+        S_final = [sys.dipoles[m, 1, 1, 1][a] for a in 1:3, m in 1:NS]
         jldsave(ckpt; u = collect(intg.u), t = intg.t, dipoles = S_final,
                 geometry = geometry(c), params = prep_params(c))
     catch e
@@ -438,8 +496,12 @@ correr la dinamica (p.ej. si fallo la escritura al final de la corrida).
 function regen_csvs(outdir::AbstractString)
     jldopen(joinpath(outdir, "fields.jld2"), "r") do f
         g, p = f["geometry"], f["params"]
-        c = Cfg(Symbol(g.setup), Symbol(g.axis), Tuple(Symbol.(g.roles)), g.N_BUF, g.Nx,
-                p.damping_dyn, outdir)
+        # corridas viejas (setup1/setup2) no guardan fpos: se deduce de spin_sites y roles
+        fp = haskey(g, :fpos) ? g.fpos :
+             (sD = g.spin_sites[findfirst(==("D"), g.roles)];
+              [s - sD for (s, r) in zip(g.spin_sites, g.roles) if r != "D"])
+        c = make_cfg(fp, Symbol(g.axis), g.N_BUF, p.damping_dyn, outdir)
+        c.Nx == g.Nx || error("Nx inconsistente: $(c.Nx) vs $(g.Nx)")
         obs = (t = f["t"], σx_i = f["sigma_i"], n_i = f["n_i"], Iα = f["I_alpha"],
                Iαx = f["I_alpha_x"])
         println("regenerando CSV en ", outdir)

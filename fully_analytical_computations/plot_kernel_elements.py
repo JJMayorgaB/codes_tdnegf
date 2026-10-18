@@ -45,7 +45,7 @@ from inbedding_leads_plot import _fmt_axes            # noqa: E402
 
 JL = os.path.join(HERE, 'kernel_elements.jl')
 DEFAULT_PARAMS = os.path.join(HERE, '..', 'two_oscillators_setup', 'y_precession', 'output',
-                              'setup2_gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0', 'params.txt')
+                              'DFF', 'F1-2', 'gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0', 'params.txt')
 
 FORMATS = ['jpg']                                             # --formats
 
@@ -95,8 +95,12 @@ def read_params(path):
 
 def run_tag(params):
     """Carpeta de la corrida de TDNEGF sin los campos buf.. y adyn.. (igual que run_tag del .jl)."""
-    toks = os.path.basename(os.path.dirname(os.path.abspath(params))).split('_')
-    return '_'.join(t for t in toks if not t.startswith(('buf', 'adyn')))
+    d = os.path.dirname(os.path.abspath(params))
+    tag = '_'.join(t for t in os.path.basename(d).split('_') if not t.startswith(('buf', 'adyn')))
+    # estructura nueva <eje>_precession/output/DFF/F../<tag>: mismo tag que el viejo setup2_<tag>
+    lay = os.path.basename(os.path.dirname(os.path.dirname(d)))
+    pre = {'DFF': 'setup2_', 'FDF': 'setup1_'}.get(lay, '')
+    return tag if tag.startswith('setup') else pre + tag
 
 
 def tagnum(x):

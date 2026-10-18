@@ -1,37 +1,85 @@
 #!/usr/bin/env bash
-# 4 conjuntos de parametros x {z,y}_precession x {setup1,setup2}, en paralelo;
-# luego una animacion por conjunto con sus 4 corridas.
-# Uso (en tmux):  cd ~/codes_tdnegf/two_oscillators_setup && bash run_all.sh
-set -e
+# run_all.sh -- corridas de TDNEGF con precesion en y:
+#   8 conjuntos de parametros (los de fully_analytical_computations/run_cluster.sh)
+#   x 6 configuraciones:  DFF  F1-2, F3-6, F5-9   y   FDF  Fm1-1, Fm3-3, Fm4-4
+# = 48 corridas, lanzadas por tandas (MAXJOBS a la vez, BLAS hilos cada una).
+# Se salta las corridas que ya tienen spins_t.csv.
+#
+# Salida:  y_precession/output/{DFF,FDF}/F…/<param_tag>/
+# Logs:    y_precession/output/logs/{DFF,FDF}/F…/<param_tag>.log
+# Al final, las animaciones de cada conjunto (animation_configs.py):
+#   animations/y_precession/DFF/<param_tag>.mp4       columnas F1-2 | F3-6 | F5-9
+#   animations/y_precession/FDF/<param_tag>.mp4       columnas Fm1-1 | Fm3-3 | Fm4-4
+#   animations/y_precession/DFF_FDF/<param_tag>.mp4   las 6 (DFF arriba, FDF abajo)
+#
+# Uso (en tmux, desde two_oscillators_setup; antes, una vez: bash migrate_layout.sh):
+#   bash run_all.sh                      # 16 corridas a la vez, 8 hilos de BLAS cada una
+#   MAXJOBS=12 BLAS=8 bash run_all.sh
+#   bash run_all.sh 6 7                  # solo esos conjuntos
+#   NOANIM=1 bash run_all.sh             # sin animaciones
+set -u
 cd "$(dirname "$0")"
 
-#      GSO  THETA OMEGA
-SETS=("0.1 10 0.005"     # base (tdnegf_single_spin.jl)
-      "0.5 10 0.005"     # lam05: Markoviano, mas no reciprocidad
-      "0.1 30 0.005"     # th30:  Markoviano, mas no reciprocidad
-      "0.5 30 0.02")     # combo: no Markoviano
+MAXJOBS=${MAXJOBS:-16}
+BLAS=${BLAS:-8}
+JULIA=${JULIA:-julia}
+AX=y
+OUT=${AX}_precession/output
 
-tag() { echo "gso${1/./p}_jsd0p2_th${2}deg_Om${3/./p}_buf4_adyn0p0"; }
+#      GSO                JSD  THETA OMEGA
+SETS=("0.1                0.2  10    0.005"
+      "0.1                0.2  30    0.005"
+      "0.5                0.2  10    0.005"
+      "0.1                0.2  10    0.02"
+      "0.5                0.2  30    0.02"
+      "0.2588190451025208 0.2  10    0.005"
+      "0.1950903220161283 0.2  10    0.005"
+      "0.1                0.5  10    0.005")
 
-for s in "${SETS[@]}"; do
-  read g th om <<< "$s"
-  for d in z_precession y_precession; do
-    mkdir -p $d/output/logs
-    for st in setup1 setup2; do
-      (cd $d && GSO=$g THETA=$th OMEGA=$om OPENBLAS_NUM_THREADS=8 \
-         julia $st.jl > output/logs/${st}_$(tag $g $th $om).log 2>&1) &
-    done
+#        carpeta        FPOS
+CONFIGS=("DFF/F1-2      1,2"
+         "DFF/F3-6      3,6"
+         "DFF/F5-9      5,9"
+         "FDF/Fm1-1     -1,1"
+         "FDF/Fm3-3     -3,3"
+         "FDF/Fm4-4     -4,4")
+
+# mismo param_tag que common.jl (round(x; digits = 4), '.' -> 'p'; buf4, adyn0p0)
+tag() {
+  python3 -c "import sys
+f=lambda x: str(round(float(x),4)).replace('.','p').replace('-','m')
+g,j,th,om=sys.argv[1:]
+print(f'gso{f(g)}_jsd{f(j)}_th{round(float(th))}deg_Om{f(om)}_buf4_adyn0p0')" "$@"
+}
+
+if [ $# -gt 0 ]; then idx=("$@"); else idx=(1 2 3 4 5 6 7 8); fi
+
+echo "conjuntos: ${idx[*]}   corridas a la vez: $MAXJOBS   hilos BLAS: $BLAS"
+n_lanzadas=0
+for k in "${idx[@]}"; do
+  read -r g j th om <<< "${SETS[$((k-1))]}"
+  t=$(tag "$g" "$j" "$th" "$om")
+  for cf in "${CONFIGS[@]}"; do
+    read -r dir fpos <<< "$cf"
+    if [ -f "$OUT/$dir/$t/spins_t.csv" ]; then
+      echo "  ya existe: $dir/$t"; continue
+    fi
+    while [ "$(jobs -rp | wc -l)" -ge "$MAXJOBS" ]; do wait -n; done
+    mkdir -p "$OUT/logs/$dir"
+    log="$OUT/logs/$dir/$t.log"
+    echo "  lanzando $dir/$t  ($(date +%H:%M))"
+    ( GSO=$g JSD=$j THETA=$th OMEGA=$om OPENBLAS_NUM_THREADS=$BLAS \
+        "$JULIA" run_config.jl "$AX" "$fpos" > "$log" 2>&1 \
+      && echo "  terminado: $dir/$t" || echo "  FALLO: $dir/$t (ver $log)" ) &
+    n_lanzadas=$((n_lanzadas + 1))
   done
 done
 wait
+echo "corridas listas ($n_lanzadas lanzadas)"
 
-ls */output/setup*_*/spins_t.csv | wc -l | grep -qx $(( ${#SETS[@]} * 4 )) || \
-  { echo "alguna corrida fallo: revisar */output/logs/"; exit 1; }
-
-for s in "${SETS[@]}"; do
-  read g th om <<< "$s"
-  t=$(tag $g $th $om)
-  python3 animation.py z_precession/output/setup1_$t z_precession/output/setup2_$t \
-                       y_precession/output/setup1_$t y_precession/output/setup2_$t \
-                       --frame-skip 10 --out animations/$t.mp4
+[ "${NOANIM:-0}" = 1 ] && exit 0
+for k in "${idx[@]}"; do
+  read -r g j th om <<< "${SETS[$((k-1))]}"
+  python3 animation_configs.py "$(tag "$g" "$j" "$th" "$om")" --frame-skip 10 \
+    || echo "  animaciones incompletas para el conjunto $k"
 done

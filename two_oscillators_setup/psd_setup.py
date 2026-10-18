@@ -8,7 +8,8 @@ en dos versiones, eje y logaritmico (_log) y lineal (_lin):
     psd_spin_density_<a>-<b>T_<esc>   1x3: PSD de <sigma^alpha>_i en los sitios de D, F, F
     psd_lmm_<a>-<b>T_<esc>            1x3: PSD de M^alpha de los tres LMMs (D, F, F)
     psd_lead_currents_<a>-<b>T_<esc>  1x2: PSD de las corrientes de espin en el lead L y en el R
-    psd_bond_<i>-<j>_<a>-<b>T_<esc>   1x1: PSD de las corrientes de espin del enlace i -> j (F -> F)
+    psd_bond_<i>-<j>_<a>-<b>T_<esc>   1x1: PSD de las corrientes de espin del enlace i -> j (F -> F),
+                                      solo si los F son primeros vecinos (DFF/F1-2)
 Cada panel mide (5, 4). Lineas punteadas verticales en omega = Omega y 2 Omega.
 En la escala lineal de las dos figuras 1x3, la componente y (con su pico DC
 grande) va en un eje derecho propio, en verde, para no aplastar a x y z.
@@ -22,7 +23,7 @@ n Omega caen sobre la malla de frecuencias; resolucion Omega / (b - a). El
 relleno con ceros (--pad) solo suaviza el dibujo de los picos.
 
 Uso:
-    python psd_setup.py y_precession/output/setup2_gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0
+    python psd_setup.py y_precession/output/DFF/F1-2/gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0
     python psd_setup.py <corrida> --t-start 10 --t-end 20 --wmax 3 --window hann
 """
 
@@ -219,15 +220,19 @@ def main():
     pan3 = [[(*psd(t, dl[f'Is{c}_{lead}'].to_numpy(), **kw), col) for c, col in COMP]
             for lead in ('L', 'R')]
 
-    # 4. corriente de espin del enlace F -> F
+    # 4. corriente de espin del enlace F -> F (solo si los F son primeros vecinos)
     fr = [s for s, r in zip(sites, roles) if r == 'F']
     i, j = fr[0], fr[1]
-    dfb = pd.read_csv(os.path.join(run, 'bond_rho_t.csv'))
-    dfb = dfb[(dfb['n'] == i) & (dfb['m'] == j)]
-    tb, _, IS, im = bond_currents(dfb, pd.read_csv(os.path.join(run, 'bond_H.csv')), 'C', i, j)
-    sel = (tb >= a * T) & (tb < b * T)
-    print(f'  enlace {i} -> {j}: max|Im|/max|Re| = {im:.1e}')
-    pan4 = [[(*psd(tb[sel], IS[sel, c], **kw), col) for c, (_, col) in enumerate(COMP)]]
+    pan4 = None
+    if j - i == 1:
+        dfb = pd.read_csv(os.path.join(run, 'bond_rho_t.csv'))
+        dfb = dfb[(dfb['n'] == i) & (dfb['m'] == j)]
+        tb, _, IS, im = bond_currents(dfb, pd.read_csv(os.path.join(run, 'bond_H.csv')), 'C', i, j)
+        sel = (tb >= a * T) & (tb < b * T)
+        print(f'  enlace {i} -> {j}: max|Im|/max|Re| = {im:.1e}')
+        pan4 = [[(*psd(tb[sel], IS[sel, c], **kw), col) for c, (_, col) in enumerate(COMP)]]
+    else:
+        print(f'  AVISO: los F (sitios {i}, {j}) no son primeros vecinos: se omite psd_bond')
 
     for esc in ESCALAS:
         figura_paneles(pan1, tit_sitio, [r'PSD $\langle\hat{\sigma}^{\alpha}_{\text{i}}\rangle$'] * 3,
@@ -239,9 +244,10 @@ def main():
         figura_paneles(pan3, [r'$\text{lead}\ L$', r'$\text{lead}\ R$'],
                        [r'PSD $\text{I}^{\text{S}_{\alpha}}$'] * 2,
                        esc, args.wmax, figdir, f'psd_lead_currents_{tag}', fila=True)
-        figura_paneles(pan4, [rf'$\text{{i}}={i}\ (\text{{F}})\rightarrow \text{{j}}={j}\ (\text{{F}})$'],
-                       [r'PSD $\text{I}^{\text{S}_{\alpha}}_{\text{i}\rightarrow\text{j}}$'],
-                       esc, args.wmax, figdir, f'psd_bond_{i}-{j}_{tag}')
+        if pan4 is not None:
+            figura_paneles(pan4, [rf'$\text{{i}}={i}\ (\text{{F}})\rightarrow \text{{j}}={j}\ (\text{{F}})$'],
+                           [r'PSD $\text{I}^{\text{S}_{\alpha}}_{\text{i}\rightarrow\text{j}}$'],
+                           esc, args.wmax, figdir, f'psd_bond_{i}-{j}_{tag}')
 
 
 if __name__ == '__main__':

@@ -877,7 +877,7 @@ end
 
 # ---------------------------------------------------------------- CLI
 const DEFAULT_PARAMS = joinpath(@__DIR__, "..", "two_oscillators_setup", "y_precession", "output",
-                                "setup2_gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0", "params.txt")
+                                "DFF", "F1-2", "gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0", "params.txt")
 
 function parse_pairs(s::AbstractString)
     out = Tuple{Int,Int}[]
@@ -899,9 +899,17 @@ with(p::KParams; kw...) = KParams(; (f => get(kw, f, getfield(p, f)) for f in fi
 Etiqueta a partir de la carpeta de la corrida de TDNEGF, sin los campos que solo
 tienen sentido alli (buf.., adyn..):  setup2_..._Om0p005_buf4_adyn0p0 -> setup2_..._Om0p005
 """
-run_tag(params::AbstractString) =
-    join(filter(t -> !startswith(t, "buf") && !startswith(t, "adyn"),
-                split(basename(dirname(abspath(params))), '_')), '_')
+# carpeta de la corrida sin buf.. ni adyn..; en la estructura nueva
+# (<eje>_precession/output/DFF/F../<tag>) se antepone setup2_ (DFF) o setup1_ (FDF),
+# para que el tag sea el mismo que con el nombre viejo setup2_<tag>
+function run_tag(params::AbstractString)
+    d = dirname(abspath(params))
+    tag = join(filter(t -> !startswith(t, "buf") && !startswith(t, "adyn"),
+                      split(basename(d), '_')), '_')
+    lay = basename(dirname(dirname(d)))
+    pre = Dict("DFF" => "setup2_", "FDF" => "setup1_")
+    return startswith(tag, "setup") ? tag : get(pre, lay, "") * tag
+end
 
 "Numero para etiquetas: %g con '.' -> 'p' y '-' -> 'm' (0.005 -> 0p005)."
 tagnum(x::Real) = replace(@sprintf("%g", x), "." => "p", "-" => "m")
