@@ -49,7 +49,12 @@ Uso desde la linea de comandos (lo llama plot_kernel_elements.py):
     julia -t auto kernel_elements.jl --chi0 --sites 10       # solo χ̌(0), i∂χ̌(0), pares [1,10]^2
           [--pairs "..."] [--k-nomega 40] [--k-eta η] [--k-margin 2.0] [--datadir DIR]
       Escribe kernel_chi0_sites1-10.csv (o kernel_chi0_<pares>.csv) para llg_elements.jl.
-    --sites N vale para --kernel, --tau y --chi0 (todos los pares de [1,N]^2).
+    julia -t auto kernel_elements.jl --sbar --sites 10       # s̄_m = ⟨σ⟩_{0,m}(t=0), m = 1..10
+          [--k-nomega 40] [--k-margin 2.0] [--datadir DIR]
+      Integra en ω los armonicos lesser de 𝒢_{mm} (k = 0, ±1), con nΩ y 2nΩ, y extrapola
+      a η -> 0. Escribe sbar_sites1-10.csv (m, sx, sy, sz, n) para la LLG de los F.
+      Para los 8 conjuntos: bash run_sbar.sh
+    --sites N vale para --kernel, --tau y --chi0 (todos los pares de [1,N]^2) y --sbar (sitios 1..N).
     --tag NOMBRE fija la carpeta output/NOMBRE (si no, la de params.txt o la de los valores).
 
 Orden de las 12 columnas complejas (COEFS):
@@ -603,6 +608,82 @@ function chi0_run(pairs, p::KParams, c::KernelConfig, datadir::AbstractString, l
     return nothing
 end
 
+# ---------------------------------------------------------------- densidad de espin s̄
+#=
+Densidad de espin bombeada por el driver en los sitios del lead (sin los F), en t = 0,
+que es la que entra en la LLG del marco rotante, s̄_m = ⟨σ⟩_{0,m}(t = 0):
+
+    ⟨σ⟩_{0,m}(t) = Σ_k e^{-ikΩt} Tr[σ ρ_{mm,k}],   ρ_{mm,k} = -i ∫dω/2π 𝒢^<_{mm,k}(ω)
+    s̄_m = Σ_{k=0,±1} Tr[σ ρ_{mm,k}]
+
+Con 𝒢^<_{mm,0} = α^< 𝕀 + β^< σy y 𝒢^<_{mm,±1} = γ^<_± τ± (Tr[σx τ±] = ±i, Tr[σz τ±] = 1,
+Tr[σy τ±] = 0):
+
+    s̄^x = ∫dω/2π (γ^<_+ - γ^<_-),   s̄^y = -2i ∫dω/2π β^<,   s̄^z = -i ∫dω/2π (γ^<_+ + γ^<_-)
+    n   = -2i ∫dω/2π α^<   (ocupacion, solo como control)
+
+Malla ω = s dω (dω = Ω/nΩ, η = 5 dω, como el kernel) sobre el soporte de 𝒢^<. El
+error es lineal en η, asi que se calcula con nΩ y 2nΩ y se extrapola a η -> 0:
+s̄ = 2 s̄(η/2) - s̄(η) (Richardson). Las partes imaginarias deben ser ~ 0.
+=#
+
+"s̄^x, s̄^y, s̄^z y n de los sitios 1..Ns con un nΩ dado. Devuelve (S (Ns,4), η, Nω)."
+function sbar_integrals(Ns::Int, p::KParams, nΩ::Int, margin::Real)
+    dω = p.Ω / nΩ; η = 5 * dω
+    Lmin = -(sqrt(4γt(p)^2 + p.J_sd^2) + margin)                   # banda + estados ligados
+    Lmax = p.μ + (isfinite(p.β) ? 40 / p.β : 0.0) + 2p.Ω           # Fermi + replicas
+    ωs = collect(floor(Int, Lmin / dω):ceil(Int, Lmax / dω)) .* dω
+    pairs = [(m, m) for m in 1:Ns]
+    H = harmonics_grid(ωs, pairs, p; η = η)
+    w = dω / (2π)
+    S = zeros(ComplexF64, Ns, 4)
+    for m in 1:Ns
+        a  = w * sum(view(H, :, m, IAL)); b  = w * sum(view(H, :, m, IBL))
+        gp = w * sum(view(H, :, m, IGPL)); gm = w * sum(view(H, :, m, IGML))
+        S[m, 1] = gp - gm
+        S[m, 2] = -2im * b
+        S[m, 3] = -im * (gp + gm)
+        S[m, 4] = -2im * a
+        # control de las trazas con las matrices 2x2: s̄ = Tr[σ (ρ₀ + ρ₊ + ρ₋)]
+        ρ = -im * (a * σ0 + b * σy + gp * τp + gm * τm)
+        sm = [tr(σ * ρ) for σ in (σx, σy, σz)]
+        maximum(abs.(sm .- S[m, 1:3])) < 1e-12 * max(1.0, maximum(abs.(sm))) ||
+            error("sbar: las trazas no coinciden en el sitio $m")
+    end
+    return S, η, length(ωs)
+end
+
+"""
+Escribe <datadir>/sbar_sites1-<Ns>.csv con m, sx, sy, sz, n (extrapolados a η -> 0)
+para la LLG de los F (s̄_m del marco rotante).
+"""
+function sbar_run(Ns::Int, p::KParams, c::KernelConfig, datadir::AbstractString)
+    mkpath(datadir)
+    t0 = time()
+    S1, η1, N1 = sbar_integrals(Ns, p, c.nΩ, c.margin)
+    S2, η2, N2 = sbar_integrals(Ns, p, 2c.nΩ, c.margin)
+    S = 2 .* S2 .- S1                                              # Richardson η -> 0
+    @printf("s̄: η = %.3e y %.3e (%d y %d puntos en ω), extrapolado a η -> 0  (%.1f s)\n",
+            η1, η2, N1, N2, time() - t0)
+    imx = maximum(abs.(imag.(S[:, 1:3]))) / max(maximum(abs.(real.(S[:, 1:3]))), 1e-300)
+    cvg = maximum(abs.(S2[:, 1:3] .- S1[:, 1:3])) / max(maximum(abs.(S[:, 1:3])), 1e-300)
+    @printf("  max |Im s̄| / max |s̄| = %.1e   cambio η -> η/2: %.1e (relativo)\n", imx, cvg)
+    path = joinpath(datadir, "sbar_sites1-$Ns.csv")
+    open(path, "w") do io
+        @printf(io, "# gamma=%.15g gammaSO=%.15g J_sd=%.15g theta=%.15g Omega=%.15g mu=%.15g beta=%.15g eta=%.15g eta2=%.15g nOmega=%d margin=%.15g extrapolated=eta0\n",
+                p.γ, p.γSO, p.J_sd, p.θ, p.Ω, p.μ, p.β, η1, η2, c.nΩ, c.margin)
+        println(io, "m,sx,sy,sz,n")
+        for m in 1:Ns
+            @printf(io, "%d,%.15e,%.15e,%.15e,%.15e\n", m, real(S[m, 1]), real(S[m, 2]), real(S[m, 3]), real(S[m, 4]))
+        end
+    end
+    for m in 1:min(Ns, 3)
+        @printf("  m=%d  s̄ = (%+.6e, %+.6e, %+.6e)   n = %.6f\n", m, real.(S[m, :])...)
+    end
+    println("  -> ", path)
+    return nothing
+end
+
 # ---------------------------------------------------------------- kernel en tiempo
 #=
 Kernel en tiempo, τ = t - t':
@@ -953,6 +1034,7 @@ function main(args = ARGS)
     do_kernel = false
     do_tau = false
     do_chi0 = false
+    do_sbar = false
     i = 1
     while i ≤ length(args)
         a = args[i]
@@ -964,6 +1046,8 @@ function main(args = ARGS)
             do_tau = true; i += 1
         elseif a == "--chi0"
             do_chi0 = true; i += 1
+        elseif a == "--sbar"
+            do_sbar = true; i += 1
         elseif haskey(opt, a) && i < length(args)
             opt[a] = args[i+1]; i += 2
         else
@@ -997,6 +1081,14 @@ function main(args = ARGS)
                 γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β,
                 join(["($m,$n)" for (m, n) in pairs], " "), nthreads())
         Base.invokelatest(tau_run, pairs, p, c, datadir)
+        return nothing
+    end
+    if do_sbar
+        c = KernelConfig(; nΩ = parse(Int, opt["--k-nomega"]), margin = parse(Float64, opt["--k-margin"]))
+        Ns = isempty(opt["--sites"]) ? 10 : parse(Int, opt["--sites"])
+        @printf("γ̃=%.4f θ_SO=%.4f J_sd=%.3f θ=%.1f° Ω=%.4g μ=%.2f β=%.1f | sitios 1..%d | hilos %d\n",
+                γt(p), θSO(p), p.J_sd, rad2deg(p.θ), p.Ω, p.μ, p.β, Ns, nthreads())
+        Base.invokelatest(sbar_run, Ns, p, c, datadir)
         return nothing
     end
     if do_chi0
