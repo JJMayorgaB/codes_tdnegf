@@ -297,13 +297,14 @@ function main(args = ARGS)
             st = Tuple{Vector{Float64},Float64}[]
             for w in nwin:-1:1                                          # de la mas vieja a la ultima
                 seg = traj[end-w*kW+1:end-(w-1)*kW, cols]
-                μ = vec(sum(seg; dims = 1)) ./ size(seg, 1)
-                A = sqrt(sum(abs2, seg .- μ') / size(seg, 1))           # RMS de la oscilacion de M̄
-                push!(st, (μ, A))
+                μw = vec(sum(seg; dims = 1)) ./ size(seg, 1)
+                amp = sqrt(sum(abs2, seg .- μw') / size(seg, 1))       # RMS de la oscilacion de M̄
+                push!(st, (μw, amp))
             end
-            for (w, (μ, A)) in zip(nwin:-1:1, st)
+            # (no reusar A ni D: son los tensores que se escriben en params_llg.txt)
+            for (w, (μw, amp)) in zip(nwin:-1:1, st)
                 push!(diaglines, @sprintf("  F%d  ventana -%d: media M̄ = (%+.5f, %+.5f, %+.5f)   amplitud RMS = %.5f",
-                                     p, w, μ..., A))
+                                     p, w, μw..., amp))
             end
             dμ = norm(st[end][1] - st[end-1][1]); dA = abs(st[end][2] - st[end-1][2])
             push!(diaglines, @sprintf("  F%d  ultimas dos ventanas: |Δ media| = %.2e   |Δ amplitud| = %.2e", p, dμ, dA))
