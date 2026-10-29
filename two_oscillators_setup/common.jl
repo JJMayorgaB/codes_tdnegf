@@ -401,7 +401,10 @@ function run_config(fpos::AbstractVector{<:Integer}, axis::Symbol; outroot::Abst
     site_ranges = [get_sub(i, N_loc) for i in 1:p_model.N_sites]
 
     prob = ODEProblem(eom_tdnegf_blocks!, u0, (0.0, t_final), p_blocks)
-    intg = init(prob, Vern7(); dt = Δt, save_everystep = false, adaptive = true, dense = false)
+    # maxiters sin limite: el defecto (1e5 pasos internos en total) se agota en corridas
+    # largas (NPER grande) y el integrador se detiene en silencio
+    intg = init(prob, Vern7(); dt = Δt, save_everystep = false, adaptive = true, dense = false,
+                maxiters = typemax(Int))
 
     llg_relax = Langevin(Δt; damping = damping_relax, kT = kT)
     # sin damping intrinseco: integrador conservativo (Langevin exige damping > 0)
@@ -422,6 +425,11 @@ function run_config(fpos::AbstractVector{<:Integer}, axis::Symbol; outroot::Abst
         llg = intg.t < t_relax ? llg_relax : llg_dyn
 
         DifferentialEquations.step!(intg, Δt, true)
+        # si el integrador de los electrones se detiene (maxiters, dt muy chico, ...) intg.t
+        # deja de avanzar: parar aqui en vez de seguir moviendo los espines con ρ congelada
+        abs(intg.t - i * Δt) ≤ 1e-6 * max(1.0, i * Δt) ||
+            error(@sprintf("el integrador de los electrones se detuvo en t = %.4f (paso %d, se esperaba t = %.4f); retcode = %s",
+                           intg.t, i, i * Δt, string(intg.sol.retcode)))
         set_lead_coupling!(blocks, ξ_L0, ξ_R0, lead_switch(intg.t))
         Sunny.step!(sys, llg)
         force_driven!(sys, c, intg.t)
