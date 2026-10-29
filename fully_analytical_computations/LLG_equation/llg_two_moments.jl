@@ -3,17 +3,26 @@
 llg_two_moments.jl -- LLG efectiva (Floquet, marco rotante) de dos momentos libres
 F1, F2 en los sitios a < b del lead derecho, con el driver D en el sitio 0:
 
-    ∂_t M̄_i = -J_sd M̄_i × [ s̄_i - (Ω/J_sd) ŷ + Σ_{j=1,2} ( 𝒜̄_ij M̄_j + 𝒟̄_ij D_t M̄_j ) ],
+    ∂_t M̄_i = +J_sd M̄_i × [ s̄_i + (Ω/J_sd) ŷ + Σ_{j=1,2} ( 𝒜̄_ij M̄_j + 𝒟̄_ij D_t M̄_j ) ],
     D_t M̄_j = ∂_t M̄_j + Ω ŷ × M̄_j,
     𝒜̄_ij v = J_ij v + Γ_ij v + v × t_ij,    𝒟̄_ij v = α_ij v + Λ_ij v + v × r_ij,
 
 y la trayectoria fisica M_i(t) = R_y(Ω (t - t_on)) M̄_i(t)  (t_on: fase cero del driver,
 la de common.jl). El driver en el marco rotante es fijo, M̄_D = (0, cos θ, sin θ).
 
+Signo: el de TDNEGF (Sunny) y el de Heisenberg para Ĥ_sd = -J_sd σ̂·M, es decir
+∂_t M = +J_sd M × ⟨σ̂⟩ en el laboratorio; al pasar al marco rotante el termino
+cinematico da +(Ω/J_sd) ŷ dentro del corchete.
+
 Como ∂_t M̄ aparece a los dos lados (D_t), en cada evaluacion se resuelve el sistema
 lineal 6x6
-    ∂_t M̄_i + J_sd M̄_i × Σ_j 𝒟̄_ij ∂_t M̄_j = -J_sd M̄_i × B_i,
-    B_i = s̄_i - (Ω/J_sd) ŷ + Σ_j ( 𝒜̄_ij M̄_j + Ω 𝒟̄_ij (ŷ × M̄_j) ).
+    ∂_t M̄_i - J_sd M̄_i × Σ_j 𝒟̄_ij ∂_t M̄_j = J_sd M̄_i × B_i,
+    B_i = s̄_i + (Ω/J_sd) ŷ + Σ_j ( 𝒜̄_ij M̄_j + Ω 𝒟̄_ij (ŷ × M̄_j) ).
+
+Duracion: por defecto 100 periodos desde t0 (--periods N o --tfinal T), independiente
+de la duracion de TDNEGF. Convergencia al atractor (punto fijo o ciclo limite): al final
+se comparan ventanas consecutivas de --diag-window periodos (defecto 4): promedio de M̄_i
+y amplitud RMS de su oscilacion alrededor del promedio. Si dejan de cambiar, llego.
 Integrador: RK4 de paso fijo; |M̄_i| se renormaliza tras cada paso (la deriva antes
 de renormalizar se guarda como diagnostico del paso).
 
@@ -21,9 +30,8 @@ Entradas (sitios a, b del analitico; el indice 1 de la LLG es a y el 2 es b):
     ../output/<tag>/data/llg_elements_sites1-10.csv   J, Γ, t, α, Λ, r de (a,a) (a,b) (b,a) (b,b)
     ../output/<tag>/data/sbar_sites1-10.csv           s̄_a, s̄_b (y J_sd, Ω, θ del encabezado)
     TDNEGF (opcional): ../../two_oscillators_setup/y_precession/output/DFF/F<a>-<b>/<tag sin setup2_>_buf4_adyn0p0
-        params.txt  -> t_on, t_rise, t_final, Δt_out (y control de J_sd, Ω, θ, γ_SO)
+        params.txt  -> t_on, t_rise, Δt_out (y control de J_sd, Ω, θ, γ_SO)
         spins_t.csv -> condicion inicial en t0 = primera muestra con t ≥ t_on + t_rise
-    Las salidas caen en los mismos tiempos que spins_t.csv de TDNEGF.
 
 Salidas en output/<tag>/F<a>-<b>[_ic<etiqueta>]/ (junto a este script):
     spins_t_llg.csv    t, M1_x..M3_z: M1 = D (analitico), M2 = F1, M3 = F2 en el laboratorio
@@ -35,8 +43,9 @@ Uso:
     julia llg_two_moments.jl --tag setup2_gso0p1_jsd0p2_th10deg_Om0p005 --sites 3,6
         [--tdnegf RUTA|none]                 # por defecto se deduce del tag y los sitios
         [--ic tdnegf|+y|-y|"x,y,z;x,y,z"]    # condicion inicial (defecto: tdnegf, o +y sin TDNEGF)
-        [--t0 T] [--tfinal T] [--ton T]      # sin TDNEGF: t0 = 0, t_on = 0, t_final = t0 + 15 (2π/Ω)
-        [--dt 1.0] [--dtout 2.0] [--outdir RUTA] [--overwrite]
+        [--t0 T] [--ton T]                   # sin TDNEGF: t0 = 0, t_on = 0
+        [--periods 100 | --tfinal T]         # duracion desde t0 (defecto 100 periodos)
+        [--dt 1.0] [--dtout 2.0] [--diag-window 4] [--outdir RUTA] [--overwrite]
     Para todos los conjuntos y configuraciones DFF: bash run_llg_all.sh
 =#
 
@@ -123,12 +132,12 @@ function rhs(m::Model, M::Vector{Float64})
     L = Matrix{Float64}(I, 6, 6)
     r = zeros(6)
     for i in 1:2
-        Bi = m.s[i] - (m.Ω / m.Jsd) * YHAT
+        Bi = m.s[i] + (m.Ω / m.Jsd) * YHAT
         for j in 1:2
             Bi += m.A[i, j] * Mv[j] + m.Ω * (m.D[i, j] * cross(YHAT, Mv[j]))
-            L[3i-2:3i, 3j-2:3j] .+= m.Jsd .* (cx(Mv[i]) * m.D[i, j])
+            L[3i-2:3i, 3j-2:3j] .-= m.Jsd .* (cx(Mv[i]) * m.D[i, j])
         end
-        r[3i-2:3i] = -m.Jsd * cross(Mv[i], Bi)
+        r[3i-2:3i] = m.Jsd * cross(Mv[i], Bi)
     end
     return L \ r
 end
@@ -157,7 +166,8 @@ end
 
 function main(args = ARGS)
     opt = Dict("--tag" => "", "--sites" => "", "--tdnegf" => "", "--ic" => "", "--t0" => "",
-               "--tfinal" => "", "--ton" => "", "--dt" => "1.0", "--dtout" => "2.0", "--outdir" => "")
+               "--tfinal" => "", "--periods" => "100", "--ton" => "", "--dt" => "1.0", "--dtout" => "2.0",
+               "--diag-window" => "4", "--outdir" => "")
     overwrite = false
     i = 1
     while i ≤ length(args)
@@ -225,14 +235,13 @@ function main(args = ARGS)
         target = isempty(opt["--t0"]) ? t_on + tp["t_rise"] : parse(Float64, opt["--t0"])
         r0 = findfirst(≥(target - 1e-9), dat[:, 1]); r0 === nothing && error("TDNEGF no llega a t0 = $target")
         t0 = dat[r0, 1]
-        tf = isempty(opt["--tfinal"]) ? dat[end, 1] : parse(Float64, opt["--tfinal"])
         M0_td = [dat[r0, 3mF[k]-1:3mF[k]+1] for k in 1:2]       # columnas M<m>_x,y,z
     else
         t_on = isempty(opt["--ton"]) ? 0.0 : parse(Float64, opt["--ton"])
         t0 = isempty(opt["--t0"]) ? 0.0 : parse(Float64, opt["--t0"])
-        tf = isempty(opt["--tfinal"]) ? t0 + 15T : parse(Float64, opt["--tfinal"])
         M0_td = nothing
     end
+    tf = isempty(opt["--tfinal"]) ? t0 + parse(Float64, opt["--periods"]) * T : parse(Float64, opt["--tfinal"])
 
     # ---- condicion inicial en el marco rotante
     Mb0 = if ic == "tdnegf"
@@ -274,10 +283,35 @@ function main(args = ARGS)
         end
         traj[k+1, 1] = t0 + k * dtout; traj[k+1, 2:7] = M
     end
-    kT = round(Int, T / dtout)
-    conv = nout ≥ kT ? maximum(abs.(traj[end, 2:7] .- traj[end-kT, 2:7])) : NaN
-    @printf("  %.1f s   deriva de |M̄| por paso: %.1e   max|M̄(t_f) - M̄(t_f - T)|: %.1e\n",
-            time() - t1, drift, conv)
+    @printf("  %.1f s   deriva de |M̄| por paso (antes de renormalizar): %.1e\n", time() - t1, drift)
+
+    # ---- convergencia al atractor: ventanas consecutivas de W periodos al final
+    W = parse(Float64, opt["--diag-window"])
+    kW = round(Int, W * T / dtout)
+    nwin = min(3, nout ÷ max(kW, 1))
+    diaglines = String[]
+    if nwin ≥ 2
+        push!(diaglines, @sprintf("convergencia: ventanas de %g periodos al final (la ultima es [t_f - %gT, t_f])", W, W))
+        for p in 1:2
+            cols = 3p-1:3p+1
+            st = Tuple{Vector{Float64},Float64}[]
+            for w in nwin:-1:1                                          # de la mas vieja a la ultima
+                seg = traj[end-w*kW+1:end-(w-1)*kW, cols]
+                μ = vec(sum(seg; dims = 1)) ./ size(seg, 1)
+                A = sqrt(sum(abs2, seg .- μ') / size(seg, 1))           # RMS de la oscilacion de M̄
+                push!(st, (μ, A))
+            end
+            for (w, (μ, A)) in zip(nwin:-1:1, st)
+                push!(diaglines, @sprintf("  F%d  ventana -%d: media M̄ = (%+.5f, %+.5f, %+.5f)   amplitud RMS = %.5f",
+                                     p, w, μ..., A))
+            end
+            dμ = norm(st[end][1] - st[end-1][1]); dA = abs(st[end][2] - st[end-1][2])
+            push!(diaglines, @sprintf("  F%d  ultimas dos ventanas: |Δ media| = %.2e   |Δ amplitud| = %.2e", p, dμ, dA))
+        end
+    else
+        push!(diaglines, "convergencia: corrida demasiado corta para comparar ventanas de $W periodos")
+    end
+    foreach(l -> println("  ", l), diaglines)
 
     # ---- salida
     hdr = "t,M1_x,M1_y,M1_z,M2_x,M2_y,M2_z,M3_x,M3_y,M3_z"
@@ -310,7 +344,9 @@ function main(args = ARGS)
             println(io, "A_", p, q, " = ", string(A[p, q]))
             println(io, "D_", p, q, " = ", string(D[p, q]))
         end
-        @printf(io, "deriva max de |Mbar| por paso = %.3e\nmax|Mbar(t_f) - Mbar(t_f - T)| = %.3e\n", drift, conv)
+        println(io, "signo: dM/dt = +J_sd M x <sigma> (convencion de TDNEGF/Sunny)")
+        @printf(io, "deriva max de |Mbar| por paso = %.3e\n", drift)
+        foreach(l -> println(io, l), diaglines)
     end
     println("  -> ", f_lab, "\n  -> ", f_rot)
     return nothing
