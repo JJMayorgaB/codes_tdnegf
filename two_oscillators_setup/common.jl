@@ -26,7 +26,8 @@ Protocolo: leads encendidos suavemente en t_leads; relajacion con damping hasta
 t_on = 5 (2π/0.005) ≈ 6283 para TODO Ω (la fija el ancho de banda de los leads,
 no el driver); luego rampa del cono (t_rise) y 15 periodos de driver:
 t_final = t_on + 15 T. Con Ω = 0.005 es lo mismo que antes (t_on = 5T, t_final = 20T).
-Variables de entorno: GSO, JSD, THETA (grados), OMEGA y FPOS.
+Variables de entorno: GSO, JSD, THETA (grados), OMEGA, FPOS y NPER (periodos de driver
+despues de t_on, defecto 15; con NPER ≠ 15 la carpeta lleva el sufijo _np<NPER>).
 
 Salida: <outroot>/<disposicion>/<separacion>/<param_tag>/, p. ej.
     y_precession/output/DFF/F3-6/gso0p1_jsd0p2_th10deg_Om0p005_buf4_adyn0p0/
@@ -76,7 +77,10 @@ const t_leads = 630.0                # encendido suave del acople a los leads
 const t_on    = 5 * (2π / 0.005)     # arranca el driver
 const t_rise  = 630.0                # rampa del angulo del cono
 const t_relax = t_on
-const t_final = t_on + 15 * T_drive
+# periodos de driver despues de t_on (NPER, defecto 15); con NPER ≠ 15 el param_tag lleva
+# _np<NPER> para no sobrescribir la corrida de 15 periodos
+const N_PER   = parse(Int, get(ENV, "NPER", "15"))
+const t_final = t_on + N_PER * T_drive
 
 # salida: CSV cada OUT_STRIDE pasos (Δt_out = 2.0, ~628 puntos por periodo)
 const OUT_STRIDE = 20
@@ -127,7 +131,8 @@ end
 
 @inline fmtnum(x::Real) = replace(string(round(Float64(x); digits = 4)), "." => "p", "-" => "m")
 param_tag(c::Cfg) = "gso$(fmtnum(γso))_jsd$(fmtnum(j_sd))_th$(round(Int, rad2deg(θ_max)))deg" *
-                    "_Om$(fmtnum(Ω))_buf$(c.N_BUF)_adyn$(fmtnum(c.damping_dyn))"
+                    "_Om$(fmtnum(Ω))_buf$(c.N_BUF)_adyn$(fmtnum(c.damping_dyn))" *
+                    (N_PER == 15 ? "" : "_np$(N_PER)")
 
 # eje de precesion y cono prescrito del driver
 axis_vec(ax::Symbol) = ax === :z ? SVector(0.0, 0.0, 1.0) :
