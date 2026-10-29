@@ -181,6 +181,11 @@ function main(args = ARGS)
     fsb = joinpath(ddir, "sbar_sites1-10.csv")
     isfile(fel) || error("no encuentro $fel")
     isfile(fsb) || error("no encuentro $fsb (corre antes kernel_elements.jl --sbar / run_sbar.sh)")
+    # los llg_elements no tienen encabezado: el signo del kernel se lee de su origen (kernel_chi0)
+    fk0 = joinpath(ddir, "kernel_chi0_sites1-10.csv")
+    get(read_meta(fk0), "chi_sign", "0") == "1" ||
+        error("$fk0 no tiene chi_sign=1: kernel con el signo viejo (-i J_sd). " *
+              "Corrige antes con  python fix_kernel_sign.py --tag $tag  (desde fully_analytical_computations)")
     meta = read_meta(fsb)
     Jsd = parse(Float64, meta["J_sd"]); Ω = parse(Float64, meta["Omega"]); θ = parse(Float64, meta["theta"])
     γso = parse(Float64, meta["gammaSO"])
