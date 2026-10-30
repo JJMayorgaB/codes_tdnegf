@@ -80,18 +80,22 @@ def leer_params(llgdir):
 
 
 def titulos(p, td):
-    """Titulos y columna m de TDNEGF de cada panel (D, F1, F2), como en plot_setup.py."""
+    """Columna m de TDNEGF de cada panel (D, F1, F2) y etiqueta del sitio relativa al driver:
+    i = 0 (D), i = a y i = b (F) para la configuracion Fa-b."""
+    ms = [1, 2, 3]
     if td != 'none' and os.path.isfile(os.path.join(td, 'geometry.csv')):
         geo = pd.read_csv(os.path.join(td, 'geometry.csv'))
         sD = int(geo.loc[geo.role == 'D', 'site'].iloc[0])
         mD = int(geo.loc[geo.role == 'D', 'm'].iloc[0])
         mF = [int(geo.loc[geo.site == sD + d, 'm'].iloc[0]) for d in (p['a'], p['b'])]
         ms = [mD] + mF
-        sites = [sD, sD + p['a'], sD + p['b']]
-        return ms, [rf'$\text{{m}}={m}\ (\text{{{r}}},\ \text{{i}}={s})$'
-                    for m, r, s in zip(ms, ['D', 'F', 'F'], sites)]
-    return [1, 2, 3], [r'$\text{D}$', rf'$\text{{F}}_1\ (\text{{d}}={p["a"]})$',
-                       rf'$\text{{F}}_2\ (\text{{d}}={p["b"]})$']
+    return ms, [r'$\text{i}=0$', rf'$\text{{i}}={p["a"]}$', rf'$\text{{i}}={p["b"]}$']
+
+
+def _etiqueta(ax, texto):
+    """Etiqueta pequena del sitio, justo encima del borde superior derecho del panel
+    (fuera del area de datos, para no tapar ninguna curva)."""
+    ax.text(1.0, 1.015, texto, transform=ax.transAxes, ha='right', va='bottom', fontsize=15)
 
 
 def td_plot(ax, x, y, col, n_mark):
@@ -127,25 +131,28 @@ def fig_cmp(llgdir, p, td, D, last, formats):
     if D is not None:
         tD = D['t'].max()
         shift = round((tL - tD) / T) * T                 # entero de periodos: misma fase del driver
-        Dw = D[D['t'] >= tD - last * T]
-        Lw = L[(L['t'] >= tD - last * T + shift) & (L['t'] <= tD + shift)]
-        xL = (Lw['t'] - shift) / T
+        t_ini = tD - last * T                            # el eje de tiempo empieza en 0 en la ventana
+        Dw = D[D['t'] >= t_ini]
+        Lw = L[(L['t'] >= t_ini + shift) & (L['t'] <= tD + shift)]
+        xL = (Lw['t'] - shift - t_ini) / T
+        xD = (Dw['t'] - t_ini) / T
         nota = f'LLG: ultimos {last:g}T de su evolucion, corrida {round(shift / T)}T'
     else:
-        Lw = L[L['t'] >= tL - last * T]
-        xL = Lw['t'] / T
+        t_ini = tL - last * T
+        Lw = L[L['t'] >= t_ini]
+        xL = (Lw['t'] - t_ini) / T
         nota = None
     fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
     for k, ax in enumerate(axes):
         for a, col in COMP:
             if D is not None:
-                td_plot(ax, Dw['t'] / T, Dw[f'M{ms[k]}_{a}'], col, N_MARK_T)
+                td_plot(ax, xD, Dw[f'M{ms[k]}_{a}'], col, N_MARK_T)
             ax.plot(xL, Lw[f'M{k + 1}_{a}'], color=col, zorder=4, **LS_LLG)
         ax.axhline(0.0, color='0.5', ls=':', lw=1.0, zorder=1)
-        ax.set_title(tit[k], fontsize=18)
-        ax.set_xlabel(TLAB); ax.set_xlim(xL.min(), xL.max())
+        _etiqueta(ax, tit[k])
+        ax.set_xlabel(TLAB); ax.set_xlim(0.0, xL.max())
         _fmt_axes(ax); _sci_yaxis(ax)
-    axes[0].set_ylabel(r'$M^{\alpha}_{\text{m}}(t)$')
+    axes[0].set_ylabel(r'$M^{\alpha}_{\text{i}}(t)$')
     _alpha_legend(axes[0])
     _leyenda_metodos(axes[0], D is not None)
     if nota:
@@ -160,12 +167,12 @@ def fig_rot(llgdir, p, td, formats):
     fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
     for k, ax in enumerate(axes):
         for a, col in COMP:
-            ax.plot(R['t'] / T, R[f'M{k + 1}_{a}'], '-', color=col, lw=1.2, zorder=3)
+            ax.plot((R['t'] - R['t'].min()) / T, R[f'M{k + 1}_{a}'], '-', color=col, lw=1.2, zorder=3)
         ax.axhline(0.0, color='0.5', ls=':', lw=1.0, zorder=1)
-        ax.set_title(tit[k], fontsize=18)
-        ax.set_xlabel(TLAB); ax.set_xlim(R['t'].min() / T, R['t'].max() / T)
+        _etiqueta(ax, tit[k])
+        ax.set_xlabel(TLAB); ax.set_xlim(0.0, (R['t'].max() - R['t'].min()) / T)
         _fmt_axes(ax); _sci_yaxis(ax)
-    axes[0].set_ylabel(r'$\bar{M}^{\alpha}_{\text{m}}(t)$')
+    axes[0].set_ylabel(r'$\bar{M}^{\alpha}_{\text{i}}(t)$')
     _alpha_legend(axes[0])
     _save(fig, os.path.join(llgdir, 'figures'), 'spins_rot_llg', formats)
 
@@ -225,15 +232,15 @@ def fig_psd(llgdir, p, td, D, nper, wmax, pad, formats):
                     cur.append((*PD[f'M{ms[k]}_{a}'], col, 'TD'))
                 cur.append((*PL[f'M{k + 1}_{a}'], col, LS_LLG))
             ders.append(_panel(ax, cur, esc, wmax))
-            ax.set_title(tit[k], fontsize=18)
+            _etiqueta(ax, tit[k])
             ax.set_xlabel(WLAB)
-        axes[0].set_ylabel(r'PSD $M^{\alpha}_{\text{m}}$')
+        axes[0].set_ylabel(r'PSD $M^{\alpha}_{\text{i}}$')
         _unificar_y(list(axes), mostrar=0, lado='left')
         tw = [d for d in ders if d is not None]
         if len(tw) > 1:
             _unificar_y(tw, mostrar=len(tw) - 1, lado='right')
         if ders[-1] is not None:
-            ders[-1].set_ylabel(r'PSD $M^{y}_{\text{m}}$', color=SPIN_COLORS['sy'])
+            ders[-1].set_ylabel(r'PSD $M^{y}_{\text{i}}$', color=SPIN_COLORS['sy'])
         _alpha_legend(axes[0])
         h = [Line2D([], [], color='k', **LS_LLG, label='LLG-Floquet')]
         if PD is not None:

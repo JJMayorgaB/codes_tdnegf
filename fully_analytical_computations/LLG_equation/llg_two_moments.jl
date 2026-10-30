@@ -46,7 +46,7 @@ Uso:
         [--t0 T] [--ton T]                   # sin TDNEGF: t0 = 0, t_on = 0
         [--periods 100 | --tfinal T]         # duracion desde t0 (defecto 100 periodos)
         [--dt 1.0] [--dtout 2.0] [--diag-window 4] [--outdir RUTA] [--overwrite]
-        [--cutoff-coef] [--cutoff-value 1e-5]  # o CUTOFF_COEF=true: anula los coeficientes de
+        [--cutoff-coef] [--cutoff-value 1e-4]  # o CUTOFF_COEF=true: anula los coeficientes de
                                              # intercambio, damping y s̄ con |valor| < cutoff
                                              # (pares por partes S y A); la salida va a la misma carpeta
     Para todos los conjuntos y configuraciones DFF: bash run_llg_all.sh
@@ -198,7 +198,7 @@ end
 function main(args = ARGS)
     opt = Dict("--tag" => "", "--sites" => "", "--tdnegf" => "", "--ic" => "", "--t0" => "",
                "--tfinal" => "", "--periods" => "100", "--ton" => "", "--dt" => "1.0", "--dtout" => "2.0",
-               "--diag-window" => "4", "--outdir" => "", "--cutoff-value" => "1e-5")
+               "--diag-window" => "4", "--outdir" => "", "--cutoff-value" => "1e-4")
     overwrite = false
     cutoff_coef = lowercase(get(ENV, "CUTOFF_COEF", "false")) in ("true", "1", "yes")
     i = 1
