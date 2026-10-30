@@ -109,12 +109,13 @@ function floquet_rho(p::KParams, sites, Mb, nΩ::Int, P::Int, margin::Real, orde
     K = 2order + 1
     ks = collect(-K:K)
     nint = s2 - s1 + 1
-    nth = nthreads()
-    Gs  = [(zeros(ComplexF64, N, N), zeros(ComplexF64, N, N), zeros(ComplexF64, N, N)) for _ in 1:nth]
-    acc = [zeros(ComplexF64, length(ks), 2, 2, 2, 2, order + 1) for _ in 1:nth]
-    @threads :static for ii in 1:nint
-        tid = threadid()
-        Gr, Ga, Gl = Gs[tid]
+    # bloques de ω, uno por tarea (no se usa threadid(): en Julia ≥ 1.12 puede superar nthreads())
+    chunks = collect(Iterators.partition(1:nint, cld(nint, nthreads())))
+    acc = [zeros(ComplexF64, length(ks), 2, 2, 2, 2, order + 1) for _ in chunks]
+    @threads for ic in eachindex(chunks)
+      Gr = zeros(ComplexF64, N, N); Ga = zeros(ComplexF64, N, N); Gl = zeros(ComplexF64, N, N)
+      A = acc[ic]
+      for ii in chunks[ic]
         fill!(Gr, 0); fill!(Ga, 0); fill!(Gl, 0)
         i0 = ii + sh                                                       # ω de integracion en ωs
         for (ip, (m, n)) in enumerate(pos), q in -P:P
@@ -135,13 +136,13 @@ function floquet_rho(p::KParams, sites, Mb, nΩ::Int, P::Int, margin::Real, orde
                 push!(Xs, Gr * (V * (Gr * VX0)) + Gr * (V * (Gl * VGa)) + Gl * (V * (Ga * VGa)))
             end
         end
-        A = acc[tid]
         for (o, X) in enumerate(Xs), (ik, k) in enumerate(ks), m in 1:2
             r0 = lin0(m, k)
             for n in 1:2, a in 1:2, b in 1:2
                 A[ik, m, n, a, b, o] += X[r0+a, (n-1)*2+b]
             end
         end
+      end
     end
     ρ = sum(acc) .* (-im * dω / (2π))
     return ρ, ks, η, nint
@@ -185,6 +186,7 @@ function main_bond(args = ARGS)
     P = isempty(opt["--nfloq"]) ? 2order + 2 : parse(Int, opt["--nfloq"])
     P ≥ 2order + 1 || error("--nfloq tiene que ser ≥ 2·orden + 1 = $(2order + 1)")
     nΩ = parse(Int, opt["--nomega"]); margin = parse(Float64, opt["--margin"])
+    BLAS.set_num_threads(1)                         # matrices pequeñas: el paralelismo va en ω
 
     llgdir = joinpath(HERE_B, "output", tag, "F$a-$b")
     ptxt = read(joinpath(llgdir, "params_llg.txt"), String)
