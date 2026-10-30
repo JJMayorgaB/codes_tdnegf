@@ -1,208 +1,178 @@
 #!/usr/bin/env julia
 #=
 bond_current_llg.jl -- matriz densidad de los F (enlace a -> b y sitios a, b) a partir de la
-G lesser vestida a primer orden con los momentos de la LLG efectiva, en el estado estacionario.
+G lesser vestida con los momentos de la LLG efectiva en el estado estacionario, calculada en
+espacio de Floquet.
 
 Funciones de Green del lead derecho con el driver por embedding (kernel_elements.jl, k = 0, ±1):
 
-    G^μ_{mn}(t,t') = Σ_k e^{-ikΩt} 𝒢^μ_{mn,k}(t-t'),   𝒢^μ_{mn,k}(τ) = ∫dω/2π e^{-iωτ} 𝒢^μ_{mn,k}(ω)
+    G^μ_{mn}(t,t') = Σ_k e^{-ikΩt} ∫dω/2π e^{-iω(t-t')} 𝒢^μ_{mn,k}(ω)
 
-(coeff_tau de kernel_elements.jl; t = tiempo de Floquet = t_lab - t_on). G lesser vestida a
-primer orden en los F (𝙂 = G vestida), con σ·M_j = Σ_β M^β_j σ^β y j = 1, 2 (los dos F):
+con t el tiempo de Floquet (t_lab - t_on). Matriz de Floquet de una funcion de dos tiempos:
+Ǎ_{pq}(ω) = A(ω+pΩ, ω+qΩ), es decir Ǧ^μ_{mn,pq}(ω) = 𝒢^μ_{mn,p-q}(ω+qΩ).
 
-    𝙂^<_{mn}(t,t) = G^<_{mn}(t,t) - J_sd Σ_{j=1,2} Σ_β ∫dt'' X^β_{mn;j}(t,t'') M^β_j(t''),
-    X^β_{mn;j}(t,t'') = G^<_{mj}(t,t'') σ^β G^a_{jn}(t'',t) + G^r_{mj}(t,t'') σ^β G^<_{jn}(t'',t).
+Momentos de los F en el estado estacionario (punto fijo de la LLG en el marco rotante):
+M_j(t) = R_y(Ωt) M̄_j, de modo que
 
-X (2x2) en la base de Pauli: X = ½ Tr[X] 𝕀 + ½ Σ_α Tr[σ^α X] σ^α. Con el kernel de siempre
-χ^{αβ} = i J_sd Tr[σ^α X] y la componente de carga χ^{0β} = -J_sd Tr[X]:
+    σ·M_j(t) = Σ_{q=0,±1} e^{-iqΩt} V̌_{j,q},
+    V̌_{j,0} = M̄^y_j σy,   V̌_{j,+1} = (M̄^z_j - i M̄^x_j) τ+,   V̌_{j,-1} = (M̄^z_j + i M̄^x_j) τ-,
 
-    𝙂^<_{mn}(t,t) = G^<_{mn}(t,t) + ½ Σ_{j=1,2} Σ_β ∫dt'' [ χ^{0β}_{mn;j}(t,t'') 𝕀 + i Σ_α χ^{αβ}_{mn;j}(t,t'') σ^α ] M^β_j(t'')
+y su matriz de Floquet es V̌_{j,pq} = V̌_{j,p-q}. Con H^sd_F = -J_sd Σ_{j=a,b} σ·M_j, la expansion
+de Dyson 𝙂 = G + G H^sd_F G + G H^sd_F G H^sd_F G + ... da, por Langreth (V = -J_sd σ·M_j en el
+sitio j, j = a, b):
 
-(con m = n, χ^{αβ}_{mm;j} es el χ^{αβ}_{mj} de la LLG). Floquet, τ = t - t'':
+    orden 0:  G^<
+    orden 1:  G^r V G^<  +  G^< V G^a
+    orden 2:  G^r V G^r V G^<  +  G^r V G^< V G^a  +  G^< V G^a V G^a
 
-    χ^{μβ}_{mn;j}(t,t-τ) = Σ_K e^{-iKΩt} χ̌^{μβ}_{mn;j,K}(τ),    K = k1 + k2 = 0, ±1, ±2,
-    χ̌^{μβ}_{mn;j,K}(τ) = c_μ Σ_{k1+k2=K} e^{ik2Ωτ} Tr[ σ^μ ( 𝒢^<_{mj,k1}(τ) σ^β 𝒢^a_{jn,k2}(-τ) + 𝒢^r_{mj,k1}(τ) σ^β 𝒢^<_{jn,k2}(-τ) ) ],
-    c_0 = -J_sd (σ^0 = 𝕀),  c_α = i J_sd,
+donde los productos en el tiempo son productos de matrices de Floquet (sitios a, b x armonicos
+p = -P..P x espin). La matriz densidad a tiempos iguales:
 
-calculado en τ con los 𝒢^μ_{mn,k}(τ) de coeff_tau (como kernel_tau de kernel_elements.jl). Para
-m = n se compara con kernel_tau (las 6 componentes xx0 yy0 xz0 xy1 yx1 xx2) como control.
-𝒢^a(-τ) y 𝒢^r(τ) se anulan para τ < 0 (analiticidad de ω + iη), asi que la integral va en
-τ ∈ [0, τmax], por trapecio con paso dτ; en τ = 0 se usan los limites laterales
-𝒢^r_{mm,0}(0+) = -i 𝕀, 𝒢^a_{mm,0}(0-) = +i 𝕀 (coeff_tau da el punto medio, -i/2 y +i/2).
-M_j(t) = trayectorias de laboratorio de la LLG (spins_t_llg.csv), interpoladas (Catmull-Rom)
-a la malla dτ.
+    ρ_{mn}(t) = -i 𝙂^<_{mn}(t,t) = Σ_k e^{-ikΩt} ρ_{mn,k},   ρ_{mn,k} = -i ∫dω/2π [𝙂̌^<_{mn}]_{k0}(ω)
 
-Estado estacionario: la salida son los tiempos de la LLG en sus ultimos --last + 1 periodos
-(el alineamiento con TDNEGF lo hace plot_bond_current_llg.py). La memoria [t - τmax, t] cae
-entera en la parte final de la LLG (punto fijo del marco rotante); si no, el script se detiene.
+Cada factor cambia el indice de Floquet en a lo sumo 1, asi que con P ≥ 2·orden + 1 los
+productos son exactos (sin error de truncamiento). La integral en ω se hace en la malla
+ω = s dω, dω = Ω/nΩ, η = 5 dω (como s̄ en kernel_elements.jl --sbar), con nΩ y 2nΩ, y se
+extrapola a η -> 0 (Richardson): ρ = 2 ρ(η/2) - ρ(η).
 
 Salida, con el mismo formato que bond_rho_t.csv de TDNEGF (sitios de TDNEGF, lead = C,
-rho_nm = -i 𝙂^<_{nm}(t,t), rho_mn = -i 𝙂^<_{mn}(t,t)):
-    output/<tag>/F<a>-<b>/bond_rho_llg.csv     pares (n,m) = (a,b), (a,a), (b,b) (t de la LLG)
+rho_nm = ρ_{nm}(t), rho_mn = ρ_{mn}(t)), ordenes 0 .. --order sumados:
+    output/<tag>/F<a>-<b>/bond_rho_llg.csv     pares (n,m) = (a,b), (a,a), (b,b), tiempos de la
+                                              LLG en sus ultimos --last + 1 periodos
 La corriente y la figura las hace plot_bond_current_llg.py (con bond_currents, como TDNEGF).
 
 Uso (desde LLG_equation):
     julia -t auto bond_current_llg.jl --tag setup2_gso0p1_jsd0p2_th10deg_Om0p005 --sites 1,2
-        [--last 5] [--taumax 1000] [--dtau 0.1] [--log2n 21] [--eta 1e-4]
+        [--order 2] [--nomega 40] [--nfloq 6] [--margin 2.0] [--last 5]
 =#
 
 include(joinpath(@__DIR__, "..", "kernel_elements.jl"))
 
-const HERE_B  = @__DIR__
+const HERE_B   = @__DIR__
 const TDROOT_B = joinpath(HERE_B, "..", "..", "two_oscillators_setup", "y_precession", "output", "DFF")
 const SIGS = (σx, σy, σz)
 
-# ---------------------------------------------------------------- 𝒢^μ_{mn,k}(τ) como matriz 2x2
-"Matriz 2x2 de 𝒢^μ_{mn,k}(τ) en la columna r de la tabla A de coeff_tau (μ = :r, :a, :l)."
-@inline function gmat(A::Matrix{ComplexF64}, μ::Symbol, k::Int, r::Int)
-    i0 = μ === :r ? 0 : (μ === :a ? 4 : 8)
-    k == 0 && return A[i0+1, r] * σ0 + A[i0+2, r] * σy
-    k == 1 && return A[i0+3, r] * τp
-    return A[i0+4, r] * τm
-end
-
-"Tablas en τ de los pares (m,n) de los F, con los limites laterales en τ = 0 del diagonal."
-function green_tau(sites, p::KParams, c::TauConfig)
-    Ag = Dict{Tuple{Int,Int},Matrix{ComplexF64}}()
-    Nτ = 0
-    for m in sites, n in sites
-        t0 = time()
-        A, Nτ = coeff_tau(m, n, p, c)
-        if m == n
-            A[IAR, Nτ+1] += -im / 2                 # -i/2 -> 𝒢^r(0+) = -i
-            A[IAA, Nτ+1] +=  im / 2                 # +i/2 -> 𝒢^a(0-) = +i
-        end
-        Ag[(m, n)] = A
-        # control de causalidad (sale de ω + iη, no se impone): 𝒢^r(τ < 0) ≈ 0 y 𝒢^a(τ > 0) ≈ 0
-        # (se excluye |τ| < 2, oscilaciones de Gibbs del corte en ω)
-        τs = (-Nτ:Nτ) .* c.dτ
-        neg = findall(<(-2.0), τs); pos = findall(>(2.0), τs)
-        cr = maximum(abs, A[[IAR, IBR, IGPR, IGMR], neg]) / maximum(abs, A[[IAR, IBR, IGPR, IGMR], :])
-        ca = maximum(abs, A[[IAA, IBA, IGPA, IGMA], pos]) / maximum(abs, A[[IAA, IBA, IGPA, IGMA], :])
-        @printf("  𝒢^μ_(%d%d,k)(τ) en %.1f s   causalidad: max|𝒢^r(τ<-2)|/max|𝒢^r| = %.1e   max|𝒢^a(τ>2)|/max|𝒢^a| = %.1e\n",
-                m, n, time() - t0, cr, ca)
+# ---------------------------------------------------------------- bloques 2x2 de 𝒢^μ_{mn,k}(ω)
+"""
+Suma en G[r0+1:r0+2, c0+1:c0+2] el bloque 2x2 del armonico k de 𝒢^μ_{mn,k}(ω), con h la fila de
+12 escalares (orden COEFS) e i0 = 0 (r), 4 (a), 8 (<):
+    k = 0: α σ0 + β σy,   k = +1: γ+ τ+,   k = -1: γ- τ-.
+"""
+@inline function putblk!(G::Matrix{ComplexF64}, r0::Int, c0::Int, h, i0::Int, k::Int)
+    if k == 0
+        α = h[i0+1]; β = h[i0+2]
+        G[r0+1, c0+1] += α;       G[r0+2, c0+2] += α
+        G[r0+1, c0+2] += -im * β; G[r0+2, c0+1] += im * β
+    elseif k == 1                                   # τ+ = (σz + iσx)/2
+        g = h[i0+3] / 2
+        G[r0+1, c0+1] += g;      G[r0+1, c0+2] += im * g
+        G[r0+2, c0+1] += im * g; G[r0+2, c0+2] += -g
+    else                                            # τ- = (σz - iσx)/2
+        g = h[i0+4] / 2
+        G[r0+1, c0+1] += g;       G[r0+1, c0+2] += -im * g
+        G[r0+2, c0+1] += -im * g; G[r0+2, c0+2] += -g
     end
-    return Ag, Nτ
+    return nothing
 end
 
-# ---------------------------------------------------------------- kernel χ̌^{μβ}_{mn;j,K}(τ)
-const PAULI4 = (σ0, σx, σy, σz)
-"Indice de (μ, K) en las tablas del kernel: μ = 0 (𝕀), 1 (x), 2 (y), 3 (z); K = -2..2."
-@inline ek(μ::Int, K::Int) = 1 + μ + 4 * (K + 2)
-
+# ---------------------------------------------------------------- ρ_{mn,k} en Floquet
 """
-    kernel_bond(Ag, m, n, sites, p, Nτ, dτ) -> χ
+    floquet_rho(p, sites, Mb, nΩ, P, margin, order) -> (ρ, ks, η, Nω)
 
-χ[ek(μ,K), s+1, β, j] = χ̌^{μβ}_{mn;j,K}(τ_s), τ_s = s dτ (s = 0..Nτ), j = indice del F en sites:
-
-    χ̌^{μβ}_{mn;j,K}(τ) = c_μ Σ_{k1+k2=K} e^{ik2Ωτ} Tr[ σ^μ ( 𝒢^<_{mj,k1}(τ) σ^β 𝒢^a_{jn,k2}(-τ)
-                                                         + 𝒢^r_{mj,k1}(τ) σ^β 𝒢^<_{jn,k2}(-τ) ) ],
-    c_0 = -J_sd,  c_{x,y,z} = +i J_sd.
+ρ[ik, m, n, σ, σ', o+1] = contribucion de orden o (0..order) a ρ_{mn,k} (m, n = posiciones 1, 2
+de sites; k = ks[ik]), con un solo nΩ (sin extrapolar).
 """
-function kernel_bond(Ag, m::Int, n::Int, sites, p::KParams, Nτ::Int, dτ::Float64)
-    χ = zeros(ComplexF64, 20, Nτ + 1, 3, length(sites))
-    cμ = (-p.J_sd, im * p.J_sd, im * p.J_sd, im * p.J_sd)
-    for (ij, j) in enumerate(sites)
-        Amj = Ag[(m, j)]; Ajn = Ag[(j, n)]
-        @threads for s in 0:Nτ
-            rp = Nτ + 1 + s; rm = Nτ + 1 - s
-            for k1 in -1:1, k2 in -1:1
-                Lp = gmat(Amj, :l, k1, rp); Rp = gmat(Amj, :r, k1, rp)
-                Am = gmat(Ajn, :a, k2, rm); Lm = gmat(Ajn, :l, k2, rm)
-                ph = cis(k2 * p.Ω * s * dτ)
-                for (ib, sb) in enumerate(SIGS)
-                    X = Lp * sb * Am + Rp * sb * Lm
-                    for μ in 0:3
-                        χ[ek(μ, k1 + k2), s+1, ib, ij] += cμ[μ+1] * ph * tr(PAULI4[μ+1] * X)
-                    end
-                end
+function floquet_rho(p::KParams, sites, Mb, nΩ::Int, P::Int, margin::Real, order::Int)
+    dω = p.Ω / nΩ; η = 5 * dω
+    Lmin = -(sqrt(4γt(p)^2 + p.J_sd^2) + margin) - (P + 1) * p.Ω           # banda + estados ligados
+    Lmax = p.μ + (isfinite(p.β) ? 40 / p.β : 0.0) + (P + 1) * p.Ω           # Fermi + replicas
+    s1 = floor(Int, Lmin / dω); s2 = ceil(Int, Lmax / dω)
+    sh = P * nΩ                                                            # ω + qΩ, |q| ≤ P
+    ωs = collect((s1 - sh):(s2 + sh)) .* dω
+    pairs = [(sites[m], sites[n]) for m in 1:2 for n in 1:2]
+    pos   = [(m, n) for m in 1:2 for n in 1:2]
+    H = harmonics_grid(ωs, pairs, p; η = η)                                # (Nω, 4, 12)
+
+    nF = 2P + 1; N = 4nF
+    lin0(s, q) = ((s - 1) * nF + (q + P)) * 2                              # (sitio, armonico) -> fila - 1
+    V = zeros(ComplexF64, N, N)
+    for j in 1:2
+        Mx, My, Mz = Mb[j]
+        Vh = Dict(0 => My * σy, 1 => (Mz - im * Mx) * τp, -1 => (Mz + im * Mx) * τm)
+        for q in -P:P, k in -1:1
+            pq = q + k
+            -P ≤ pq ≤ P || continue
+            V[lin0(j, pq)+1:lin0(j, pq)+2, lin0(j, q)+1:lin0(j, q)+2] .= -p.J_sd .* Vh[k]
+        end
+    end
+    cols = [lin0(n, 0) + b for n in 1:2 for b in 1:2]                      # columna q = 0
+    K = 2order + 1
+    ks = collect(-K:K)
+    nint = s2 - s1 + 1
+    nth = nthreads()
+    Gs  = [(zeros(ComplexF64, N, N), zeros(ComplexF64, N, N), zeros(ComplexF64, N, N)) for _ in 1:nth]
+    acc = [zeros(ComplexF64, length(ks), 2, 2, 2, 2, order + 1) for _ in 1:nth]
+    @threads :static for ii in 1:nint
+        tid = threadid()
+        Gr, Ga, Gl = Gs[tid]
+        fill!(Gr, 0); fill!(Ga, 0); fill!(Gl, 0)
+        i0 = ii + sh                                                       # ω de integracion en ωs
+        for (ip, (m, n)) in enumerate(pos), q in -P:P
+            h = view(H, i0 + q * nΩ, ip, :)                                # 𝒢(ω + qΩ)
+            for k in -1:1
+                pq = q + k
+                -P ≤ pq ≤ P || continue
+                r0 = lin0(m, pq); c0 = lin0(n, q)
+                putblk!(Gr, r0, c0, h, 0, k); putblk!(Ga, r0, c0, h, 4, k); putblk!(Gl, r0, c0, h, 8, k)
+            end
+        end
+        X0 = Gl[:, cols]
+        Xs = Matrix{ComplexF64}[X0]
+        if order ≥ 1
+            VX0 = V * X0; VGa = V * Ga[:, cols]
+            push!(Xs, Gr * VX0 + Gl * VGa)                                 # G^r V G^< + G^< V G^a
+            if order ≥ 2                                                   # los tres de orden 2
+                push!(Xs, Gr * (V * (Gr * VX0)) + Gr * (V * (Gl * VGa)) + Gl * (V * (Ga * VGa)))
+            end
+        end
+        A = acc[tid]
+        for (o, X) in enumerate(Xs), (ik, k) in enumerate(ks), m in 1:2
+            r0 = lin0(m, k)
+            for n in 1:2, a in 1:2, b in 1:2
+                A[ik, m, n, a, b, o] += X[r0+a, (n-1)*2+b]
             end
         end
     end
-    return χ
+    ρ = sum(acc) .* (-im * dω / (2π))
+    return ρ, ks, η, nint
 end
 
-"""
-Control para m = n: las 6 componentes de kernel_tau de kernel_elements.jl (xx0 yy0 xz0 xy1 yx1 xx2,
-mismas sumas tsums de los 𝒯_ab) frente a las de kernel_bond, en τ > 0. Devuelve el maximo
-|diferencia| / max|χ̌| entre las 6 componentes.
-"""
-function check_kernel(Ag, m::Int, j::Int, ij::Int, χ, p::KParams, Nτ::Int, dτ::Float64)
-    comp = ((1, 1, 0), (2, 2, 0), (1, 3, 0), (1, 2, 1), (2, 1, 1), (1, 1, 2))   # (μ, β, K)
-    Amj = Ag[(m, j)]; Ajm = Ag[(j, m)]
-    err = 0.0; scl = 0.0
-    for s in 1:Nτ
-        τ = s * dτ; ph = cis(p.Ω * τ)
-        X = Amj[:, Nτ+1+s]; Y = Ajm[:, Nτ+1-s]
-        tv = tsums(X, conj(ph) .* X, ph .* X, Y)
-        for (c, (μ, β, K)) in enumerate(comp)
-            ref = im * p.J_sd * tv[c]
-            err = max(err, abs(χ[ek(μ, K), s+1, β, ij] - ref)); scl = max(scl, abs(ref))
-        end
+"ρ_{mn}(t) (2x2) a partir de los armonicos, con los ordenes os sumados."
+function rho_t(ρ, ks, m::Int, n::Int, tF::Real, Ω::Real, os)
+    r = zeros(ComplexF64, 2, 2)
+    for o in os, (ik, k) in enumerate(ks)
+        r .+= cis(-k * Ω * tF) .* ρ[ik, m, n, :, :, o+1]
     end
-    return err / scl
+    return r
 end
 
-"""
-𝙂^<_{mn}(t,t) en los tiempos de salida, G[:, :, q]:
-
-    𝙂^<_{mn}(t,t) = Σ_k e^{-ikΩt} 𝒢^<_{mn,k}(0)
-        + ½ Σ_{j,β,K} e^{-iKΩt} ∫_0^{τmax} dτ [ χ̌^{0β}_{mn;j,K}(τ) 𝕀 + i Σ_α χ̌^{αβ}_{mn;j,K}(τ) σ^α ] M^β_j(t-τ)
-
-(trapecio). Mf[:, β, j] = M^β_j en la malla fina, base[q] = indice de t_q en esa malla,
-tF = tiempos de Floquet de la salida.
-"""
-function dressed_lesser(Ag, m::Int, n::Int, sites, p::KParams, Nτ::Int, dτ::Float64,
-                        Mf::Array{Float64,3}, base::Vector{Int}, tF::Vector{Float64}; check::Bool = false)
-    χ = kernel_bond(Ag, m, n, sites, p, Nτ, dτ)
-    if check && m == n
-        for (ij, j) in enumerate(sites)
-            @printf("  control kernel χ̌_(%d%d) frente a kernel_tau: max|Δ|/max|χ̌| = %.1e\n",
-                    m, j, check_kernel(Ag, m, j, ij, χ, p, Nτ, dτ))
-        end
+"Promedio en un periodo, en el marco rotante, de Tr[σ ρ_{mn}(t)] (vector complejo de 3)."
+function rot_mean(ρ, ks, m, n, Ω, os; nt = 400)
+    T = 2π / Ω; v = zeros(ComplexF64, 3)
+    for it in 0:nt-1
+        t = it * T / nt
+        r = rho_t(ρ, ks, m, n, t, Ω, os)
+        w = [tr(s * r) for s in SIGS]
+        c, s = cos(Ω * t), sin(Ω * t)                                     # R_y(-Ωt) w
+        v .+= [c * w[1] - s * w[3], w[2], s * w[1] + c * w[3]]
     end
-    w = fill(dτ, Nτ + 1); w[1] = w[end] = dτ / 2
-    A0 = Ag[(m, n)]
-    G0k = [gmat(A0, :l, k, Nτ + 1) for k in -1:1]
-    nt = length(base)
-    G = Array{ComplexF64}(undef, 2, 2, nt)
-    @threads for q in 1:nt
-        acc = zeros(ComplexF64, 20)                      # ∫dτ χ̌^{μβ}_{K} M^β, sumado en β y j
-        for ij in eachindex(sites), ib in 1:3
-            for s in 0:Nτ
-                mv = w[s+1] * Mf[base[q]-s, ib, ij]
-                @inbounds @simd for e in 1:20
-                    acc[e] += χ[e, s+1, ib, ij] * mv
-                end
-            end
-        end
-        g = zeros(ComplexF64, 2, 2)
-        for k in -1:1
-            g .+= cis(-k * p.Ω * tF[q]) .* G0k[k+2]
-        end
-        for K in -2:2
-            ph = cis(-K * p.Ω * tF[q])
-            g .+= (ph / 2) .* (acc[ek(0, K)] .* σ0 .+ im .* (acc[ek(1, K)] .* σx .+ acc[ek(2, K)] .* σy .+ acc[ek(3, K)] .* σz))
-        end
-        G[:, :, q] = g
-    end
-    return G
+    return v ./ nt
 end
 
-# ---------------------------------------------------------------- entrada
-"Interpolacion de Catmull-Rom en una malla uniforme t."
-function catmull_rom(t::Vector{Float64}, y::AbstractVector{Float64}, tq::Float64)
-    h = t[2] - t[1]
-    x = (tq - t[1]) / h
-    s = clamp(floor(Int, x), 1, length(t) - 3)          # puntos s-1, s, s+1, s+2 (base 0)
-    u = x - s
-    P0, P1, P2, P3 = y[s], y[s+1], y[s+2], y[s+3]
-    return 0.5 * (2P1 + (-P0 + P2) * u + (2P0 - 5P1 + 4P2 - P3) * u^2 + (-P0 + 3P1 - 3P2 + P3) * u^3)
-end
-
+# ---------------------------------------------------------------- main
 function main_bond(args = ARGS)
     opt = Dict("--tag" => "setup2_gso0p1_jsd0p2_th10deg_Om0p005", "--sites" => "1,2", "--last" => "5",
-               "--taumax" => "1000", "--dtau" => "0.1", "--log2n" => "21", "--eta" => "1e-4", "--tdnegf" => "")
+               "--order" => "2", "--nomega" => "40", "--nfloq" => "", "--margin" => "2.0", "--tdnegf" => "")
     i = 1
     while i ≤ length(args)
         haskey(opt, args[i]) && i < length(args) || error("argumento no reconocido: $(args[i])")
@@ -210,6 +180,12 @@ function main_bond(args = ARGS)
     end
     tag = opt["--tag"]
     a, b = parse.(Int, split(opt["--sites"], ','))
+    order = parse(Int, opt["--order"])
+    0 ≤ order ≤ 2 || error("--order: 0, 1 o 2")
+    P = isempty(opt["--nfloq"]) ? 2order + 2 : parse(Int, opt["--nfloq"])
+    P ≥ 2order + 1 || error("--nfloq tiene que ser ≥ 2·orden + 1 = $(2order + 1)")
+    nΩ = parse(Int, opt["--nomega"]); margin = parse(Float64, opt["--margin"])
+
     llgdir = joinpath(HERE_B, "output", tag, "F$a-$b")
     ptxt = read(joinpath(llgdir, "params_llg.txt"), String)
     t_on = parse(Float64, match(r"t_on = ([-+0-9.eE]+)", ptxt).captures[1])
@@ -220,74 +196,65 @@ function main_bond(args = ARGS)
     end
     isdir(tdir) || error("no encuentro la corrida de TDNEGF: $tdir")
     p = read_params(joinpath(tdir, "params.txt"))
-    c = TauConfig(dτ = parse(Float64, opt["--dtau"]), τmax = parse(Float64, opt["--taumax"]),
-                  log2N = parse(Int, opt["--log2n"]), η = parse(Float64, opt["--eta"]))
-    T = 2π / p.Ω; dτ = c.dτ
-    @printf("output/%s/F%d-%d   τmax = %g   dτ = %g   N = 2^%d   η = %g   hilos = %d\n",
-            tag, a, b, c.τmax, dτ, c.log2N, c.η, nthreads())
+    T = 2π / p.Ω
 
-    # ---- ventana: ultimos (--last + 1) periodos de la LLG. El periodo extra deja que
-    # plot_bond_current_llg.py elija dentro los --last periodos corridos un numero entero de
-    # periodos respecto del final de TDNEGF (no depende de la duracion de TDNEGF).
+    # ---- punto fijo de la LLG en el marco rotante: promedio del ultimo periodo
+    Rr = readdlm(joinpath(llgdir, "spins_rot_llg.csv"), ',', Float64; skipstart = 1)
+    w = findall(≥(Rr[end, 1] - T), Rr[:, 1])
+    Mb = [vec(sum(Rr[w, c0:c0+2]; dims = 1)) ./ length(w) for c0 in (5, 8)]   # M2 = F1, M3 = F2
+    amp = [maximum(sqrt.(sum((Rr[w, c0:c0+2] .- Mb[k]') .^ 2; dims = 2))) for (k, c0) in enumerate((5, 8))]
+    @printf("output/%s/F%d-%d   orden %d   P = %d   nΩ = %d y %d   hilos = %d\n", tag, a, b, order, P, nΩ, 2nΩ, nthreads())
+    for (k, s) in enumerate((a, b))
+        @printf("  M̄_%d = (%+.6f, %+.6f, %+.6f)   max|M̄(t) - M̄| en el ultimo periodo = %.1e\n", s, Mb[k]..., amp[k])
+    end
+
+    # ---- ρ_{mn,k} con nΩ y 2nΩ, extrapolado a η -> 0
+    t0 = time()
+    ρ1, ks, η1, N1 = floquet_rho(p, (a, b), Mb, nΩ, P, margin, order)
+    ρ2, _,  η2, N2 = floquet_rho(p, (a, b), Mb, 2nΩ, P, margin, order)
+    ρ = 2 .* ρ2 .- ρ1
+    @printf("  ρ_(mn,k): η = %.3e y %.3e (%d y %d puntos en ω), extrapolado a η -> 0 (%.1f s)\n",
+            η1, η2, N1, N2, time() - t0)
+    @printf("  cambio η -> η/2 (relativo): %.1e\n", maximum(abs.(ρ2 .- ρ1)) / maximum(abs.(ρ)))
+    for m in 1:2                                                       # control: orden cero en t = 0
+        r0 = rho_t(ρ, ks, m, m, 0.0, p.Ω, 0:0)
+        @printf("  orden cero, s̄_%d = (%+.6e, %+.6e, %+.6e)\n", (a, b)[m], (real(tr(s * r0)) for s in SIGS)...)
+    end
+    println("  promedio en el marco rotante de Tr[σ ρ^ab] (ρ^ab = ρ_(ba)), <σ_a> y <σ_b>, por orden:")
+    for o in 0:order
+        v = rot_mean(ρ, ks, 2, 1, p.Ω, o:o)
+        sa = real.(rot_mean(ρ, ks, 1, 1, p.Ω, o:o)); sb = real.(rot_mean(ρ, ks, 2, 2, p.Ω, o:o))
+        @printf("    orden %d: Tr[σ ρ^ab] = (%+.3e%+.3ei, %+.3e%+.3ei, %+.3e%+.3ei)   <σ_a> = (%+.5f, %+.5f, %+.5f)   <σ_b> = (%+.5f, %+.5f, %+.5f)\n",
+                o, real(v[1]), imag(v[1]), real(v[2]), imag(v[2]), real(v[3]), imag(v[3]), sa..., sb...)
+    end
+
+    # ---- serie temporal en los tiempos de la LLG (ultimos --last + 1 periodos)
     L = readdlm(joinpath(llgdir, "spins_t_llg.csv"), ',', Float64; skipstart = 1)
     tL = L[:, 1]
-    t_lo = tL[end] - (parse(Float64, opt["--last"]) + 1) * T
-    sel = findall(≥(t_lo - 1e-9), tL)
-    t_out = tL[sel]
-    Nτ = ceil(Int, tmaxof(p, c) / dτ)
-    g0 = t_out[1] - Nτ * dτ
-    g0 ≥ tL[2] || error("la memoria [t - τmax, t] se sale de la LLG (baja --last o --taumax)")
-    @printf("  ventana de la LLG: [%.1f, %.1f] (%.1f T), memoria desde %.1f (%.1f T despues del inicio de la LLG)\n",
-            t_out[1], t_out[end], (t_out[end] - t_out[1]) / T, g0, (g0 - tL[1]) / T)
-    Lf = round(Int, (t_out[end] - g0) / dτ) + 1
-    Mf = Array{Float64}(undef, Lf, 3, 2)
-    for (il, c0) in enumerate((5, 8)), ib in 1:3                # M2 = F1 (col 5:7), M3 = F2 (col 8:10)
-        y = view(L, :, c0 + ib - 1)
-        for q in 1:Lf
-            Mf[q, ib, il] = catmull_rom(tL, y, g0 + (q - 1) * dτ)
-        end
-    end
-    base = [round(Int, (t - g0) / dτ) + 1 for t in t_out]
-    tF = t_out .- t_on
-
-    # ---- funciones de Green y 𝙂^< vestida
-    sites = (a, b)
-    Ag, Nτ2 = green_tau(sites, p, c)
-    Nτ2 == Nτ || error("Nτ inconsistente")
-    for m in sites                                               # control: orden cero en t = 0 = s̄_m
-        ρ0 = -im * sum(gmat(Ag[(m, m)], :l, k, Nτ + 1) for k in -1:1)
-        @printf("  orden cero, s̄_%d = (%+.6e, %+.6e, %+.6e)\n", m, (real(tr(s * ρ0)) for s in SIGS)...)
-    end
-    t0 = time()
-    G = Dict{Tuple{Int,Int},Array{ComplexF64,3}}()
-    for (m, n) in ((a, b), (b, a), (a, a), (b, b))
-        G[(m, n)] = dressed_lesser(Ag, m, n, sites, p, Nτ, dτ, Mf, base, tF; check = true)
-    end
-    @printf("  𝙂^< vestida (4 pares, %d tiempos) en %.1f s\n", length(t_out), time() - t0)
-
-    # ---- salida en el formato de bond_rho_t.csv (sitios de TDNEGF)
+    t_out = tL[findall(≥(tL[end] - (parse(Float64, opt["--last"]) + 1) * T - 1e-9), tL)]
     geo = readdlm(joinpath(tdir, "geometry.csv"), ',', String; skipstart = 1)
     sD = parse(Int, geo[findfirst(==("D"), geo[:, 3]), 2])
     path = joinpath(llgdir, "bond_rho_llg.csv")
-    ent = ((1, 1), (1, 2), (2, 1), (2, 2))                       # uu, ud, du, dd
+    ent = ((1, 1), (1, 2), (2, 1), (2, 2))                             # uu, ud, du, dd
+    os = 0:order
     open(path, "w") do io
         print(io, "t,lead,n,m")
         for blk in ("nm", "mn"), s in ("uu", "ud", "du", "dd")
             print(io, ",Re_rho_", blk, "_", s, ",Im_rho_", blk, "_", s)
         end
         println(io)
-        for (m, n) in ((a, b), (a, a), (b, b))
-            for k in eachindex(t_out)
-                @printf(io, "%.10g,C,%d,%d", t_out[k], sD + m, sD + n)
-                for X in (G[(m, n)], G[(n, m)]), (r, s) in ent
-                    v = -im * X[r, s, k]
-                    @printf(io, ",%.15e,%.15e", real(v), imag(v))
+        for (m, n) in ((1, 2), (1, 1), (2, 2))
+            for t in t_out
+                tF = t - t_on
+                @printf(io, "%.10g,C,%d,%d", t, sD + (a, b)[m], sD + (a, b)[n])
+                for X in (rho_t(ρ, ks, m, n, tF, p.Ω, os), rho_t(ρ, ks, n, m, tF, p.Ω, os)), (r, s) in ent
+                    @printf(io, ",%.15e,%.15e", real(X[r, s]), imag(X[r, s]))
                 end
                 println(io)
             end
         end
     end
-    println("  -> ", path)
+    println("  -> ", path, "   (ordenes 0..", order, " sumados, ", length(t_out), " tiempos)")
     return nothing
 end
 
