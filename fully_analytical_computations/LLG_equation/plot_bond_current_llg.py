@@ -96,12 +96,19 @@ def main():
 
     tL, IL, ISL, imL = bond_currents(dfL, dfh, 'C', si, sj)
     tb, ID, ISD, _ = bond_currents(dfD, dfh, 'C', si, sj)
-    tD = pd.read_csv(os.path.join(td, 'spins_t.csv'))['t'].max()
-    shift = round((pd.read_csv(os.path.join(llgdir, 'spins_t_llg.csv'))['t'].max() - tD) / T) * T
+    # ventana: ultimos --last periodos de TDNEGF; la de la LLG es la misma corrida un numero
+    # entero de periodos (misma fase del driver), dentro de lo que escribio bond_current_llg.jl
+    tD = tb.max()
+    shift = np.floor((tL.max() - tD) / T + 1e-9) * T
     t_ini = tD - args.last * T
+    if t_ini + shift < tL.min() - 1e-6:
+        raise SystemExit('bond_rho_llg.csv no cubre la ventana: corre bond_current_llg.jl con el mismo --last')
+    wL = (tL >= t_ini + shift - 1e-6) & (tL <= tD + shift + 1e-6)
+    tL, IL, ISL = tL[wL], IL[wL], ISL[wL]
     w = tb >= t_ini
     xD, ID, ISD = (tb[w] - t_ini) / T, ID[w], ISD[w]
     xL = (tL - shift - t_ini) / T
+    dfL = dfL[(dfL['t'] >= t_ini + shift - 1e-6) & (dfL['t'] <= tD + shift + 1e-6)]
     print(f'output/{args.tag}/F{a}-{b}: enlace {si} -> {sj} de TDNEGF; LLG corrida {round(shift / T)}T; '
           f'max |Im I| / max |I| (LLG) = {imL:.1e}')
 

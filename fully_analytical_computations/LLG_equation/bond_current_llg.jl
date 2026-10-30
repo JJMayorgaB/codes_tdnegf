@@ -23,10 +23,9 @@ integral: g^r_{mm,0}(0+) = -i 𝕀, g^a_{mm,0}(0-) = +i 𝕀 (coeff_tau da el pu
 M_ℓ(t) = trayectorias de laboratorio de la LLG (spins_t_llg.csv), interpoladas (Catmull-Rom)
 a la malla dτ.
 
-Estado estacionario: la salida son los tiempos de la LLG en sus ultimos --last periodos,
-corridos un numero entero de periodos para que caigan sobre los ultimos --last periodos de
-TDNEGF (misma fase del driver, como spins_t_cmp). La memoria [t - τmax, t] cae entera en la
-parte final de la LLG (punto fijo del marco rotante); si no, el script se detiene.
+Estado estacionario: la salida son los tiempos de la LLG en sus ultimos --last + 1 periodos
+(el alineamiento con TDNEGF lo hace plot_bond_current_llg.py). La memoria [t - τmax, t] cae
+entera en la parte final de la LLG (punto fijo del marco rotante); si no, el script se detiene.
 
 Salida, con el mismo formato que bond_rho_t.csv de TDNEGF (sitios de TDNEGF, lead = C,
 rho_nm = -i 𝒢^<_{nm}(t,t), rho_mn = -i 𝒢^<_{mn}(t,t)):
@@ -173,19 +172,19 @@ function main_bond(args = ARGS)
     @printf("output/%s/F%d-%d   τmax = %g   dτ = %g   N = 2^%d   η = %g   hilos = %d\n",
             tag, a, b, c.τmax, dτ, c.log2N, c.η, nthreads())
 
-    # ---- ventanas (como spins_t_cmp de plot_llg_two_moments.py)
+    # ---- ventana: ultimos (--last + 1) periodos de la LLG. El periodo extra deja que
+    # plot_bond_current_llg.py elija dentro los --last periodos corridos un numero entero de
+    # periodos respecto del final de TDNEGF (no depende de la duracion de TDNEGF).
     L = readdlm(joinpath(llgdir, "spins_t_llg.csv"), ',', Float64; skipstart = 1)
     tL = L[:, 1]
-    tD = readdlm(joinpath(tdir, "spins_t.csv"), ',', Float64; skipstart = 1)[end, 1]
-    shift = round((tL[end] - tD) / T) * T
-    t_ini = tD - parse(Float64, opt["--last"]) * T
-    sel = findall(t -> t_ini + shift - 1e-9 ≤ t ≤ tD + shift + 1e-9, tL)
+    t_lo = tL[end] - (parse(Float64, opt["--last"]) + 1) * T
+    sel = findall(≥(t_lo - 1e-9), tL)
     t_out = tL[sel]
     Nτ = ceil(Int, tmaxof(p, c) / dτ)
     g0 = t_out[1] - Nτ * dτ
     g0 ≥ tL[2] || error("la memoria [t - τmax, t] se sale de la LLG (baja --last o --taumax)")
-    @printf("  ventana de la LLG: [%.1f, %.1f] (= TDNEGF [%.1f, %.1f] + %dT), memoria desde %.1f (%.1f T de LLG)\n",
-            t_out[1], t_out[end], t_ini, tD, round(Int, shift / T), g0, (g0 - tL[1]) / T)
+    @printf("  ventana de la LLG: [%.1f, %.1f] (%.1f T), memoria desde %.1f (%.1f T despues del inicio de la LLG)\n",
+            t_out[1], t_out[end], (t_out[end] - t_out[1]) / T, g0, (g0 - tL[1]) / T)
     Lf = round(Int, (t_out[end] - g0) / dτ) + 1
     Mf = Array{Float64}(undef, Lf, 3, 2)
     for (il, c0) in enumerate((5, 8)), ib in 1:3                # M2 = F1 (col 5:7), M3 = F2 (col 8:10)
