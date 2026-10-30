@@ -6,12 +6,12 @@ propia evolucion), no ventanas de tiempo iguales.
 
 Figuras en output/<tag>/F<a>-<b>/figures/ (o en --llgdir/figures):
     spins_t_cmp         1x3 (D, F1, F2): M^alpha_m(t) en el laboratorio, ultimos --last periodos
-                        de cada simulacion. TDNEGF en linea discontinua y LLG-Floquet en linea
-                        continua (mismo color por componente). La ventana de la LLG se corre un
+                        de cada simulacion. TDNEGF en circulos abiertos (--td-style dashed: linea
+                        discontinua) y LLG-Floquet en linea continua (mismo color por componente). La ventana de la LLG se corre un
                         numero entero de periodos para que caiga sobre la de TDNEGF: la fase del
                         driver coincide y el panel del D sirve de control.
     psd_cmp_{log,lin}   1x3 (D, F1, F2): PSD de M^alpha_m en los ultimos --psd-periods periodos de
-                        cada simulacion (TDNEGF discontinua, LLG continua). Misma definicion que
+                        cada simulacion (TDNEGF en circulos, LLG continua). Misma definicion que
                         psd_setup.py: P(w) = |Σ w_n x_n e^{iwt_n}|^2/(Σ w_n)^2 con ventana de Hann,
                         A cos(w0 t) -> pico (A/2)^2; en la escala lineal la componente y va en un
                         eje derecho propio (verde).
@@ -48,7 +48,10 @@ COMP = (('x', SPIN_COLORS['sx']), ('y', SPIN_COLORS['sy']), ('z', SPIN_COLORS['s
 TLAB = r'$\text{Time}\, (2\pi/\Omega)$'
 WLAB = r'$\omega/\Omega$'
 TDROOT = os.path.join(HERE, '..', '..', 'two_oscillators_setup', 'y_precession', 'output', 'DFF')
-LS_TD = dict(ls='--', lw=1.3)          # TDNEGF
+LS_TD = dict(ls='--', lw=1.3)          # TDNEGF con --td-style dashed
+TD_STYLE = 'circles'                   # TDNEGF: circulos abiertos (defecto) o linea discontinua
+N_MARK_T = 70                          # circulos por curva en spins_t_cmp
+N_MARK_W = 90                          # circulos por curva en la PSD (en [0, wmax])
 LS_LLG = dict(ls='-', lw=1.6)          # LLG-Floquet
 
 
@@ -91,10 +94,26 @@ def titulos(p, td):
                        rf'$\text{{F}}_2\ (\text{{d}}={p["b"]})$']
 
 
+def td_plot(ax, x, y, col, n_mark):
+    """Curva de TDNEGF: circulos abiertos submuestreados (o linea discontinua)."""
+    x = np.asarray(x); y = np.asarray(y)
+    if TD_STYLE == 'circles':
+        st = max(1, len(x) // n_mark)
+        ax.plot(x[::st], y[::st], ls='none', marker='o', mfc='none', mec=col, ms=5, mew=1.0, zorder=3)
+    else:
+        ax.plot(x, y, color=col, zorder=3, **LS_TD)
+
+
+def td_handle():
+    if TD_STYLE == 'circles':
+        return Line2D([], [], ls='none', marker='o', mfc='none', mec='k', ms=6, label='TDNEGF')
+    return Line2D([], [], color='k', **LS_TD, label='TDNEGF')
+
+
 def _leyenda_metodos(ax, con_td):
     h = [Line2D([], [], color='k', **LS_LLG, label='LLG-Floquet')]
     if con_td:
-        h.insert(0, Line2D([], [], color='k', **LS_TD, label='TDNEGF'))
+        h.insert(0, td_handle())
     ax.add_artist(ax.get_legend())
     ax.legend(handles=h, loc='center right', fontsize=14, frameon=False)
 
@@ -120,7 +139,7 @@ def fig_cmp(llgdir, p, td, D, last, formats):
     for k, ax in enumerate(axes):
         for a, col in COMP:
             if D is not None:
-                ax.plot(Dw['t'] / T, Dw[f'M{ms[k]}_{a}'], color=col, zorder=3, **LS_TD)
+                td_plot(ax, Dw['t'] / T, Dw[f'M{ms[k]}_{a}'], col, N_MARK_T)
             ax.plot(xL, Lw[f'M{k + 1}_{a}'], color=col, zorder=4, **LS_LLG)
         ax.axhline(0.0, color='0.5', ls=':', lw=1.0, zorder=1)
         ax.set_title(tit[k], fontsize=18)
@@ -166,7 +185,7 @@ def _panel(ax, curvas, escala, wmax):
     izq = [c for c in curvas if not (escala == 'lin' and c[2] == cy)]
     der = [c for c in curvas if escala == 'lin' and c[2] == cy]
     for om, Pw, col, st in izq:
-        ax.plot(om, Pw, color=col, zorder=3, **st)
+        td_plot(ax, om, Pw, col, N_MARK_W) if st == 'TD' else ax.plot(om, Pw, color=col, zorder=3, **st)
     for n in (1, 2):
         ax.axvline(n, color='0.5', ls=':', lw=1.2, zorder=1)
     _ylim(ax, max(Pw.max() for _, Pw, _, _ in izq), escala)
@@ -179,7 +198,7 @@ def _panel(ax, curvas, escala, wmax):
     ax.tick_params(axis='y', right=False)
     ax2 = ax.twinx()
     for om, Pw, col, st in der:
-        ax2.plot(om, Pw, color=col, zorder=3, **st)
+        td_plot(ax2, om, Pw, col, N_MARK_W) if st == 'TD' else ax2.plot(om, Pw, color=col, zorder=3, **st)
     _ylim(ax2, max(Pw.max() for _, Pw, _, _ in der), escala)
     ax2.tick_params(axis='y', direction='in', right=True, left=False, size=5.0, width=1.0, colors=cy)
     ax2.spines['right'].set_color(cy)
@@ -203,7 +222,7 @@ def fig_psd(llgdir, p, td, D, nper, wmax, pad, formats):
             cur = []
             for a, col in COMP:
                 if PD is not None:
-                    cur.append((*PD[f'M{ms[k]}_{a}'], col, LS_TD))
+                    cur.append((*PD[f'M{ms[k]}_{a}'], col, 'TD'))
                 cur.append((*PL[f'M{k + 1}_{a}'], col, LS_LLG))
             ders.append(_panel(ax, cur, esc, wmax))
             ax.set_title(tit[k], fontsize=18)
@@ -218,7 +237,7 @@ def fig_psd(llgdir, p, td, D, nper, wmax, pad, formats):
         _alpha_legend(axes[0])
         h = [Line2D([], [], color='k', **LS_LLG, label='LLG-Floquet')]
         if PD is not None:
-            h.insert(0, Line2D([], [], color='k', **LS_TD, label='TDNEGF'))
+            h.insert(0, td_handle())
         axes[1].legend(handles=h, loc='upper right', fontsize=13, frameon=False)
         _save(fig, os.path.join(llgdir, 'figures'), f'psd_cmp_{esc}', formats)
     print(f'  PSD: ultimos {nper:g} periodos de cada simulacion (resolucion {1 / nper:.3f} Omega)')
@@ -235,7 +254,11 @@ def main():
     ap.add_argument('--wmax', type=float, default=3.0, help='omega/Omega maximo de la PSD')
     ap.add_argument('--pad', type=int, default=8, help='relleno con ceros de la PSD (solo dibujo)')
     ap.add_argument('--formats', default='jpg,svg,pdf')
+    ap.add_argument('--td-style', choices=['circles', 'dashed'], default='circles',
+                    help='TDNEGF en circulos abiertos (defecto) o en linea discontinua')
     args = ap.parse_args()
+    global TD_STYLE
+    TD_STYLE = args.td_style
     if args.llgdir:
         llgdir = args.llgdir
     else:

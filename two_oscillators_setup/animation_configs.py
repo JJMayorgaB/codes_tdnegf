@@ -218,8 +218,7 @@ def main():
     if not tags:
         tags = sorted({t for lay, seps in CONFIGS.items() for s in seps
                        if os.path.isdir(os.path.join(root, lay, s))
-                       for t in os.listdir(os.path.join(root, lay, s))
-                       if not t.endswith('_old_t_on')})
+                       for t in os.listdir(os.path.join(root, lay, s))})
     which = [w.strip() for w in args.which.split(',') if w.strip()]
     styles = [w.strip() for w in args.style.split(',') if w.strip()]
     for st in styles:

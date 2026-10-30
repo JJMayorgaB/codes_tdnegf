@@ -46,6 +46,9 @@ Uso:
         [--t0 T] [--ton T]                   # sin TDNEGF: t0 = 0, t_on = 0
         [--periods 100 | --tfinal T]         # duracion desde t0 (defecto 100 periodos)
         [--dt 1.0] [--dtout 2.0] [--diag-window 4] [--outdir RUTA] [--overwrite]
+        [--cutoff-coef] [--cutoff-value 1e-5]  # o CUTOFF_COEF=true: anula los coeficientes de
+                                             # intercambio, damping y s̄ con |valor| < cutoff
+                                             # (pares por partes S y A); la salida va a la misma carpeta
     Para todos los conjuntos y configuraciones DFF: bash run_llg_all.sh
 =#
 
@@ -89,6 +92,34 @@ function tensor3(el, i::Int, j::Int, names)
     return [c+xx  xy+tz  xz-ty;
             xy-tz c+yy   yz+tx;
             xz+ty yz-tx  c+zz]
+end
+
+"""
+Cutoff de coeficientes (CUTOFF_COEF): anula en el Dict de elementos todos los coeficientes
+con |valor| < cut de los sitios (a, b), los mismos que entran en la LLG:
+  on-site (a,a) y (b,b): cada elemento por separado;
+  par (a,b)/(b,a): partes simetrica S = (X_ab + X_ba)/2 y antisimetrica A = (X_ab - X_ba)/2
+  por separado, y se reconstruye X_ab = S + A, X_ba = S - A.
+Devuelve la lista de los coeficientes anulados (nombre y valor).
+"""
+function cutoff_elements!(el, a::Int, b::Int, cut::Real)
+    quitados = Tuple{String,Float64}[]
+    for n in (NAMES_A..., NAMES_D...)
+        for i in (a, b)
+            v = el[(i, i, n)]
+            if abs(v) < cut
+                el[(i, i, n)] = 0.0
+                push!(quitados, ("$(n)_$(i)$(i)", v))
+            end
+        end
+        S = (el[(a, b, n)] + el[(b, a, n)]) / 2
+        A = (el[(a, b, n)] - el[(b, a, n)]) / 2
+        abs(S) < cut && (push!(quitados, ("$(n)^S_$(a)$(b)", S)); S = 0.0)
+        abs(A) < cut && (push!(quitados, ("$(n)^A_$(a)$(b)", A)); A = 0.0)
+        el[(a, b, n)] = S + A
+        el[(b, a, n)] = S - A
+    end
+    return quitados
 end
 
 "s̄_m de sbar_sites1-N.csv (columnas m, sx, sy, sz, n)."
@@ -167,13 +198,16 @@ end
 function main(args = ARGS)
     opt = Dict("--tag" => "", "--sites" => "", "--tdnegf" => "", "--ic" => "", "--t0" => "",
                "--tfinal" => "", "--periods" => "100", "--ton" => "", "--dt" => "1.0", "--dtout" => "2.0",
-               "--diag-window" => "4", "--outdir" => "")
+               "--diag-window" => "4", "--outdir" => "", "--cutoff-value" => "1e-5")
     overwrite = false
+    cutoff_coef = lowercase(get(ENV, "CUTOFF_COEF", "false")) in ("true", "1", "yes")
     i = 1
     while i ≤ length(args)
         a = args[i]
         if a == "--overwrite"
             overwrite = true; i += 1
+        elseif a == "--cutoff-coef"
+            cutoff_coef = true; i += 1
         elseif haskey(opt, a) && i < length(args)
             opt[a] = args[i+1]; i += 2
         else
@@ -200,10 +234,21 @@ function main(args = ARGS)
     Jsd = parse(Float64, meta["J_sd"]); Ω = parse(Float64, meta["Omega"]); θ = parse(Float64, meta["theta"])
     γso = parse(Float64, meta["gammaSO"])
     el = read_elements(fel)
+    s = [read_sbar(fsb, a), read_sbar(fsb, b)]
+    cutv = parse(Float64, opt["--cutoff-value"])
+    quitados = Tuple{String,Float64}[]
+    if cutoff_coef
+        quitados = cutoff_elements!(el, a, b, cutv)
+        for (p, m) in ((1, a), (2, b)), c in 1:3
+            if abs(s[p][c]) < cutv
+                push!(quitados, ("sbar$("xyz"[c])_$(m)", s[p][c])); s[p][c] = 0.0
+            end
+        end
+        @printf("CUTOFF_COEF: se anulan %d coeficientes con |valor| < %.1e\n", length(quitados), cutv)
+    end
     sites = (a, b)
     A = [tensor3(el, sites[p], sites[q], NAMES_A) for p in 1:2, q in 1:2]
     D = [tensor3(el, sites[p], sites[q], NAMES_D) for p in 1:2, q in 1:2]
-    s = [read_sbar(fsb, a), read_sbar(fsb, b)]
     model = Model(Jsd, Ω, θ, A, D, s)
     T = 2π / Ω
 
@@ -346,6 +391,14 @@ function main(args = ARGS)
             println(io, "D_", p, q, " = ", string(D[p, q]))
         end
         println(io, "signo: dM/dt = +J_sd M x <sigma> (convencion de TDNEGF/Sunny)")
+        if cutoff_coef
+            @printf(io, "CUTOFF_COEF = true: anulados %d coeficientes con |valor| < %.1e:\n", length(quitados), cutv)
+            for (n, v) in quitados
+                @printf(io, "  %s = %+.4e\n", n, v)
+            end
+        else
+            println(io, "CUTOFF_COEF = false (todos los coeficientes)")
+        end
         @printf(io, "deriva max de |Mbar| por paso = %.3e\n", drift)
         foreach(l -> println(io, l), diaglines)
     end

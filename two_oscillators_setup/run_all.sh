@@ -4,8 +4,8 @@
 #   x 6 configuraciones:  DFF  F1-2, F3-6, F5-9   y   FDF  Fm1-1, Fm3-3, Fm4-4
 # = 48 corridas, lanzadas por tandas (MAXJOBS a la vez, BLAS hilos cada una).
 # Se salta las corridas que ya tienen spins_t.csv con el protocolo actual
-# (t_on = 5 (2π/0.005) para todo Ω). Las de Ω = 0.02 hechas con t_on = 5T se mueven
-# a <param_tag>_old_t_on/ y se corren de nuevo (42 corridas en total).
+# (t_on = 5 (2π/0.005) para todo Ω). Las hechas con otro protocolo se borran y se
+# corren de nuevo en la misma carpeta (no se guardan datos viejos).
 #
 # Salida:  y_precession/output/{DFF,FDF}/F…/<param_tag>/
 # Logs:    y_precession/output/logs/{DFF,FDF}/F…/<param_tag>.log
@@ -69,9 +69,8 @@ for k in "${idx[@]}"; do
       if grep -q "t_on = t_relax = 6283.18" "$OUT/$dir/$t/params.txt"; then
         echo "  ya existe: $dir/$t"; continue
       fi
-      old="$OUT/$dir/${t}_old_t_on"
-      echo "  protocolo viejo (t_on = 5T): se mueve a ${old#$OUT/} y se corre de nuevo"
-      mv "$OUT/$dir/$t" "$old"
+      echo "  protocolo viejo (t_on distinto): se borra $dir/$t y se corre de nuevo"
+      rm -rf "$OUT/$dir/$t"
     fi
     while [ "$(jobs -rp | wc -l)" -ge "$MAXJOBS" ]; do wait -n; done
     mkdir -p "$OUT/logs/$dir"
